@@ -1,6 +1,11 @@
 # Changelog
 
-## [Unreleased] — M5 打磨
+## [1.0.0] — 2026-07-15
+
+> 正式版:API 從此穩定。規畫書 M1–M5 全數完成——
+> 真實驗證(QuillNest 以 0.2.0/0.3.0 在正式資料上運行)、
+> 三資料庫 × EF 8/9/10 測試矩陣、並發保護、編譯期防呆。
+> NuGet `Cornhsu.*` 前綴保留已核准。
 
 ### Added
 - **Roslyn Analyzer 隨 `Cornhsu.Labeling` 套件出貨**(安裝即生效):

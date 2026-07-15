@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <PackageId>Cornhsu.Labeling.EntityFrameworkCore</PackageId>
+    <Description>Cornhsu.Labeling 的 EF Core 實作。為每個可標記型別自動產生具備完整外鍵的 join table,支援跨型別標籤查詢。</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Cornhsu.Labeling\Cornhsu.Labeling.csproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+</Project>

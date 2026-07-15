@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write   # Trusted Publishing:允許 GitHub 簽發 OIDC token 與 NuGet 交換臨時金鑰
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,9 +26,17 @@ jobs:
       - run: dotnet test -c Release --no-build
       - run: dotnet pack -c Release --no-build -p:Version=${{ steps.ver.outputs.version }} -o ./artifacts
 
+      # Trusted Publishing:用 GitHub OIDC 向 nuget.org 換一把只活 1 小時的臨時金鑰,
+      # 不需要保管長效 API key、也不需要 repo secret
+      - name: NuGet login (OIDC → temp API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: Cornhsu   # nuget.org 使用者名稱(不是 email)
+
       - name: Push to NuGet
         run: >
           dotnet nuget push "./artifacts/*.nupkg"
-          -k ${{ secrets.NUGET_API_KEY }}
+          -k ${{ steps.login.outputs.NUGET_API_KEY }}
           -s https://api.nuget.org/v3/index.json
           --skip-duplicate

@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased] — 0.1.0-preview.3
+## [0.2.0] — 2026-07-15
+
+> M4 里程碑:QuillNest 已刪除本地 AppLabel 實作、改用本套件,
+> 正式資料完成遷移(方案 A:單選分類留消費端 FK,多對多與 Label 本體走套件)。
 
 ### Added
 - `GetLabelsOfManyAsync(entities)`:批次讀取多個實體的標籤(一次查詢),解清單畫面 N+1。

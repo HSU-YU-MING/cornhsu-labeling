@@ -88,6 +88,33 @@ var todoIds = all
 
 完整可執行範例見 [samples/MinimalConsole](samples/MinimalConsole/Program.cs)。
 
+## 使用 EF Core Migrations
+
+`ApplyLabelModel` 會把 `Label` 與每個型別的 `LabelLink_*` 表加進你的 model,
+所以 `dotnet ef migrations add` 會自動產生這些表(含完整外鍵),不需要額外設定。
+
+但有一個必知的細節:因為 DbContext 的建構子需要 `LabelRegistry`,而 `dotnet ef`
+在設計時期沒有 DI 容器,你必須提供一個 `IDesignTimeDbContextFactory`——
+**這對非 ASP.NET 應用(WPF、主控台等)尤其重要**:
+
+```csharp
+public class DesignTimeFactory : IDesignTimeDbContextFactory<AppDbContext>
+{
+    public AppDbContext CreateDbContext(string[] args)
+    {
+        // 這裡註冊的型別必須與執行時期(AddLabeling)一致
+        var registry = new LabelRegistry();
+        registry.Labelable<Note>(n => n.Title);
+        registry.Labelable<TodoItem>(t => t.Content);
+
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite("DataSource=app.db")
+            .Options;
+        return new AppDbContext(options, registry);
+    }
+}
+```
+
 ## 設計取捨
 
 「標籤 A 貼在實體 B 上」要記在某張表,但 B 是不同的表。三條路:

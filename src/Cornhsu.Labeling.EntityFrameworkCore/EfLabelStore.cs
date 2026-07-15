@@ -33,6 +33,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             Icon = icon,
             ParentId = parentId,
             CreatedAt = DateTimeOffset.UtcNow,
+            ConcurrencyStamp = Guid.NewGuid(),
         };
         _db.Set<Label>().Add(label);
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -67,6 +68,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
         // 連結存的是 Id,改名是一次 O(1) 的 UPDATE,不需要任何 cascade
         label.Name = normalized;
+        label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
@@ -96,6 +98,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         }
 
         await EnsureNoCycleAsync(label, ct).ConfigureAwait(false);
+        label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
         return label;
     }
@@ -349,7 +352,13 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                 }
 
                 ValidateNameLength(name);
-                label = new Label { Id = Guid.NewGuid(), Name = name, CreatedAt = DateTimeOffset.UtcNow };
+                label = new Label
+                {
+                    Id = Guid.NewGuid(),
+                    Name = name,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    ConcurrencyStamp = Guid.NewGuid(),
+                };
                 _db.Set<Label>().Add(label);
                 try
                 {

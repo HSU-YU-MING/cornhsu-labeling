@@ -242,8 +242,10 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
   一旦允許不同父層下同名,所有名稱定址的呼叫都會變成歧義。
   需要這種結構時,請把限定詞放進名稱本身(如「生活·雜項」)。
   未來若支援每父層唯一,勢必伴隨路徑定址(`"生活/雜項"`)的 API 改版,屬 v2 範疇。
-- **標籤名稱會自動去除前後空白**(所有輸入入口一致);**大小寫視為不同標籤**,由資料庫 collation 決定(SQLite 預設區分大小寫)。
+- **標籤名稱會自動去除前後空白**(所有輸入入口一致);大小寫語意交由資料庫 collation 決定(SQLite 預設區分大小寫、SQL Server 預設不區分)。
 - **get-or-create 標籤有競態**:兩條路徑同時建同名標籤會撞 unique index,以「重讀驗證後採用既有標籤」處理;若重讀發現不是同名競態,原例外照拋。
+- **並發修改保護**:`Label.ConcurrencyStamp` 是並發戳記(每次透過 store 修改就輪換,不依賴資料庫功能,所有 provider 行為一致)。兩邊同時修改同一個標籤時,後存檔的一方會得到 `DbUpdateConcurrencyException` 而不是默默蓋掉對方——請接住這個例外,重讀後重試或提示使用者。
+- **測試涵蓋 SQLite、SQL Server、PostgreSQL** 三個 provider(同一套測試,CI 每次都跑)。注意名稱大小寫語意隨 collation 而異:SQLite 預設區分大小寫、SQL Server 預設不區分。
 - **`ILabelStore` 的寫入方法會呼叫你的 DbContext 的 `SaveChangesAsync`**——如果同一個 context 裡有其他未存檔的變更,會被一起送出。這是「與應用共用 DbContext」模式的固有取捨;若要隔離,請用獨立的 DbContext scope 呼叫 store。
 - **只支援 EF Core 8+**。相依樓地板是 8.0.11(8.0 系列中已修補已知弱點通報的版本),消費端用 EF Core 9/10 會自動 unify。
 - 測試請用 **SQLite in-memory,不要用 EF InMemory Provider**——後者不執行外鍵約束,測不到本套件的核心保證。

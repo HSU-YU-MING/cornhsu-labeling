@@ -19,6 +19,7 @@ public static class ModelBuilderExtensions
             e.Property(x => x.Name).IsRequired().HasMaxLength(Label.MaxNameLength);
             e.Property(x => x.Color).HasMaxLength(16);
             e.Property(x => x.Icon).HasMaxLength(128);
+            e.Property(x => x.ConcurrencyStamp).IsConcurrencyToken();   // 後蓋前 → 拋例外
             e.HasIndex(x => x.Name).IsUnique();
 
             e.HasOne(x => x.Parent).WithMany(x => x.Children)

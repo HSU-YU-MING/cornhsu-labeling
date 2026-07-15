@@ -1,6 +1,7 @@
 using Cornhsu.Labeling.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Cornhsu.Labeling.Tests;
@@ -44,14 +45,20 @@ public class TestDbContext : DbContext
 }
 
 /// <summary>
-/// 用 SQLite in-memory(不是 EF InMemory Provider)——EF InMemory 不執行外鍵約束,
-/// 測不到本套件的賣點。連線必須手動開啟並持有,關掉連線資料就沒了。
+/// 測試資料庫。預設 SQLite in-memory(不是 EF InMemory Provider——它不執行外鍵約束,
+/// 測不到本套件的賣點);設環境變數 CORNHSU_TEST_PROVIDER=sqlserver|postgres
+/// 可讓同一套測試跑在真的 SQL Server / PostgreSQL 上(每個 TestDb 一個獨立資料庫,
+/// 結束時 EnsureDeleted)。連線字串可用 CORNHSU_TEST_SQLSERVER / CORNHSU_TEST_POSTGRES 覆寫。
 /// </summary>
 public sealed class TestDb : IDisposable
 {
-    private readonly SqliteConnection _conn;
+    private static readonly string Provider =
+        Environment.GetEnvironmentVariable("CORNHSU_TEST_PROVIDER")?.ToLowerInvariant() ?? "sqlite";
+
+    private readonly SqliteConnection? _conn;   // 只有 sqlite 用(in-memory 連線要活著)
     private readonly ServiceProvider _provider;
     private readonly IServiceScope _scope;
+    private readonly DbContextOptions<TestDbContext> _options;
 
     public TestDbContext Context { get; }
     public ILabelStore Store { get; }
@@ -59,14 +66,39 @@ public sealed class TestDb : IDisposable
 
     public TestDb(Action<LabelRegistry>? configure = null)
     {
-        _conn = new SqliteConnection("DataSource=:memory:");
-        _conn.Open();
-
         var services = new ServiceCollection();
+
         // EnableServiceProviderCaching(false):EF 的 model cache 以 DbContext 型別為 key(見 §8.6),
         // 測試裡每個 TestDb 的 registry 都不同,必須隔離內部 provider 才不會拿到別的測試快取的 model。
         // 正式 App 不需要這行——registry 是全 App 單例。
-        services.AddDbContext<TestDbContext>(o => o.UseSqlite(_conn).EnableServiceProviderCaching(false));
+        switch (Provider)
+        {
+            case "sqlserver":
+            {
+                var server = Environment.GetEnvironmentVariable("CORNHSU_TEST_SQLSERVER")
+                    ?? @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true;TrustServerCertificate=true";
+                var cs = $"{server};Database=cornhsu_test_{Guid.NewGuid():N}";
+                services.AddDbContext<TestDbContext>(o => o.UseSqlServer(cs).EnableServiceProviderCaching(false));
+                break;
+            }
+            case "postgres":
+            {
+                var server = Environment.GetEnvironmentVariable("CORNHSU_TEST_POSTGRES")
+                    ?? "Host=localhost;Username=postgres;Password=postgres";
+                var cs = $"{server};Database=cornhsu_test_{Guid.NewGuid():N}";
+                services.AddDbContext<TestDbContext>(o => o.UseNpgsql(cs).EnableServiceProviderCaching(false));
+                break;
+            }
+            default:
+            {
+                _conn = new SqliteConnection("DataSource=:memory:");
+                _conn.Open();
+                var conn = _conn;
+                services.AddDbContext<TestDbContext>(o => o.UseSqlite(conn).EnableServiceProviderCaching(false));
+                break;
+            }
+        }
+
         services.AddLabeling<TestDbContext>(configure ?? Default);
 
         _provider = services.BuildServiceProvider();
@@ -74,9 +106,15 @@ public sealed class TestDb : IDisposable
         Context = _scope.ServiceProvider.GetRequiredService<TestDbContext>();
         Store = _scope.ServiceProvider.GetRequiredService<ILabelStore>();
         Registry = _scope.ServiceProvider.GetRequiredService<LabelRegistry>();
+        _options = (DbContextOptions<TestDbContext>)Context.GetService<IDbContextOptions>();
 
         Context.Database.EnsureCreated();
     }
+
+    /// <summary>
+    /// 同一個資料庫上的第二個 context(模擬另一個使用端;並發測試用)。呼叫端負責 Dispose。
+    /// </summary>
+    public TestDbContext CreateSecondContext() => new(_options, Registry);
 
     private static void Default(LabelRegistry r)
     {
@@ -102,8 +140,10 @@ public sealed class TestDb : IDisposable
 
     public void Dispose()
     {
+        if (Provider != "sqlite")
+            Context.Database.EnsureDeleted();   // 伺服器型 provider:把這顆測試資料庫整個刪掉
         _scope.Dispose();
         _provider.Dispose();
-        _conn.Dispose();
+        _conn?.Dispose();
     }
 }

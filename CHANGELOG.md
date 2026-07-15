@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`Label.ConcurrencyStamp` 並發戳記**(v1.0 前最後的 schema 決定):每次透過 store 修改
+  標籤就輪換;兩邊同時修改同一個標籤時,後存檔的一方得到 `DbUpdateConcurrencyException`,
+  不再默默後蓋前。不依賴資料庫功能(如 rowversion),所有 provider 行為一致。
+  **Breaking(schema)**:Label 表多一欄,消費端需跑一次 migration。
+- **多 provider 驗證**:同一套測試(66 條)在 SQLite、SQL Server(本機 LocalDB 與 CI 容器)、
+  PostgreSQL(CI 容器)全綠;測試基礎建設以 `CORNHSU_TEST_PROVIDER` 環境變數切換。
+
 ## [0.2.0] — 2026-07-15
 
 > M4 里程碑:QuillNest 已刪除本地 AppLabel 實作、改用本套件,

@@ -17,3 +17,48 @@ jobs:
       - run: dotnet test -c Release --no-build --verbosity normal
       # sample 一定要跟著建置——它是抽象是否成立的哨兵
       - run: dotnet run --project samples/MinimalConsole -c Release
+
+  # 同一套測試跑在真的 PostgreSQL 上(名稱 collation、DateTimeOffset、Guid 行為都不同)
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [ "5432:5432" ]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet test tests/Cornhsu.Labeling.Tests -c Release
+        env:
+          CORNHSU_TEST_PROVIDER: postgres
+          CORNHSU_TEST_POSTGRES: Host=localhost;Username=postgres;Password=postgres
+
+  # 同一套測試跑在真的 SQL Server 上(collation 預設不區分大小寫、HasMaxLength 會強制)
+  test-sqlserver:
+    runs-on: ubuntu-latest
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Cornhsu-CI-P4ss!"
+        ports: [ "1433:1433" ]
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Cornhsu-CI-P4ss!' -Q 'SELECT 1' || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 10 --health-start-period 20s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet test tests/Cornhsu.Labeling.Tests -c Release
+        env:
+          CORNHSU_TEST_PROVIDER: sqlserver
+          CORNHSU_TEST_SQLSERVER: Server=localhost;User Id=sa;Password=Cornhsu-CI-P4ss!;TrustServerCertificate=true

@@ -39,4 +39,12 @@ public class Label
 
     /// <summary>建立時間(UTC)。</summary>
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// 並發戳記(concurrency token):每次透過 <c>ILabelStore</c> 修改標籤時輪換。
+    /// 兩個執行緒/程序同時修改同一個標籤時,後存檔的一方會得到
+    /// <c>DbUpdateConcurrencyException</c>,而不是默默蓋掉先存的變更。
+    /// 不依賴資料庫產生(如 SQL Server rowversion),所有 provider 行為一致。
+    /// </summary>
+    public Guid ConcurrencyStamp { get; set; }
 }

@@ -19,6 +19,10 @@
 - `UpdateAsync(labelId, l => ...)`:更新顏色/排序/父標籤(含改名唯一性檢查與父子循環防護)。
 - `Label.Icon`:視覺識別欄位(emoji / 圖示名稱 / 短碼),與 `Color` 同層級;
   `CreateAsync` 新增 `icon` 參數。業務語意欄位請用伴生表擴充(見 README「擴充 Label」)。
+- `LabelRegistry.AutoCreateLabels`(預設 true):設為 false 時,`AttachAsync` 遇到
+  不存在的標籤會拋出列出全部缺漏名稱的例外,而不是自動建立裸標籤——
+  給「標籤由管理介面策展」的 App 用。
+- 明文化「名稱全域唯一(含跨階層)」為刻意取捨,理由與替代方案寫入 README Limitations。
 
 ### Changed
 - `ILabelableDescriptor` 公開介面縮減為純描述資訊(ClrType/KeyType/TypeKey);

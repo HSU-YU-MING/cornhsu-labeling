@@ -260,15 +260,25 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         return result;
     }
 
-    /// <summary>依名稱取得標籤,不存在就建立。同名競態(unique index 撞擊)以重讀處理。</summary>
+    /// <summary>
+    /// 依名稱取得標籤;不存在時依 <see cref="LabelRegistry.AutoCreateLabels"/> 決定自動建立或拋例外。
+    /// 同名競態(unique index 撞擊)以重讀處理。
+    /// </summary>
     private async Task<List<Label>> GetOrCreateLabelsAsync(IEnumerable<string> labelNames, CancellationToken ct)
     {
         var result = new List<Label>();
+        var missing = new List<string>();
         foreach (var name in NormalizeMany(labelNames))
         {
             var label = await _db.Set<Label>().FirstOrDefaultAsync(l => l.Name == name, ct).ConfigureAwait(false);
             if (label is null)
             {
+                if (!_registry.AutoCreateLabels)
+                {
+                    missing.Add(name);   // 先收集完所有缺的,一次報清楚
+                    continue;
+                }
+
                 label = new Label { Id = Guid.NewGuid(), Name = name, CreatedAt = DateTimeOffset.UtcNow };
                 _db.Set<Label>().Add(label);
                 try
@@ -288,6 +298,12 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             }
             result.Add(label);
         }
+
+        if (missing.Count > 0)
+            throw new InvalidOperationException(
+                $"標籤 {string.Join("、", missing.Select(m => $"'{m}'"))} 不存在,而 AutoCreateLabels 已停用。" +
+                $"請先用 CreateAsync 建立(可帶顏色與圖示),或將 LabelRegistry.AutoCreateLabels 設回 true。");
+
         return result;
     }
 }

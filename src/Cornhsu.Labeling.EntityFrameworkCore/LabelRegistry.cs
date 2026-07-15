@@ -23,6 +23,14 @@ public sealed class LabelRegistry
     public string LinkTablePrefix { get; set; } = "LabelLink_";
 
     /// <summary>
+    /// 貼標時遇到不存在的標籤是否自動建立(get-or-create),預設 true。
+    /// 「策展式」標籤的 App(標籤帶顏色/圖示、由管理介面精心建立)建議設為 false:
+    /// <c>AttachAsync</c> 遇到不存在的標籤會拋出清楚的例外,
+    /// 而不是默默建立一個沒有顏色、沒有圖示的裸標籤。
+    /// </summary>
+    public bool AutoCreateLabels { get; set; } = true;
+
+    /// <summary>
     /// 註冊一個可標記型別。主鍵型別自 <see cref="ILabelable{TKey}"/> 自動推斷,
     /// 所以只需要一個型別參數:<c>r.Labelable&lt;Note&gt;(n =&gt; n.Title)</c>。
     /// </summary>

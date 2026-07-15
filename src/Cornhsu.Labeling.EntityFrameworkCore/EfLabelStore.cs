@@ -76,28 +76,16 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
     public async Task AttachAsync<T>(T entity, params string[] labelNames) where T : class, ILabelable
     {
-        _registry.Require<T>();                                   // 未註冊 → 清楚的例外
+        var descriptor = _registry.Require<T>();                  // 未註冊 → 清楚的例外
         var labels = await GetOrCreateLabelsAsync(labelNames);    // get-or-create
 
-        foreach (var label in labels)
-        {
-            var exists = await _db.Set<LabelLink<T>>()
-                .AnyAsync(l => l.LabelId == label.Id && l.EntityId == entity.Id);
-            if (exists) continue;                                 // 冪等
-
-            _db.Set<LabelLink<T>>().Add(new LabelLink<T>
-            {
-                LabelId = label.Id,
-                EntityId = entity.Id,
-                AttachedAt = DateTimeOffset.UtcNow,
-            });
-        }
+        await descriptor.AddMissingLinksAsync(_db, entity, labels, default);
         await _db.SaveChangesAsync();
     }
 
     public async Task DetachAsync<T>(T entity, params string[] labelNames) where T : class, ILabelable
     {
-        _registry.Require<T>();
+        var descriptor = _registry.Require<T>();
 
         var names = labelNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
         if (names.Count == 0) return;
@@ -108,23 +96,13 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             .ToListAsync();
         if (labelIds.Count == 0) return;
 
-        var links = await _db.Set<LabelLink<T>>()
-            .Where(l => l.EntityId == entity.Id && labelIds.Contains(l.LabelId))
-            .ToListAsync();
-        _db.Set<LabelLink<T>>().RemoveRange(links);
+        await descriptor.RemoveLinksAsync(_db, entity, labelIds, default);
         await _db.SaveChangesAsync();
     }
 
-    public async Task<IReadOnlyList<Label>> GetLabelsOfAsync<T>(T entity, CancellationToken ct = default)
+    public Task<IReadOnlyList<Label>> GetLabelsOfAsync<T>(T entity, CancellationToken ct = default)
         where T : class, ILabelable
-    {
-        _registry.Require<T>();
-        return await _db.Set<LabelLink<T>>()
-            .Where(l => l.EntityId == entity.Id)
-            .Select(l => l.Label)
-            .OrderBy(l => l.SortOrder).ThenBy(l => l.Name)
-            .ToListAsync(ct);
-    }
+        => _registry.Require<T>().GetLabelsAsync(_db, entity, ct);
 
     // ---- 查詢 ----
 
@@ -144,15 +122,12 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         string labelName, bool includeDescendants = true, CancellationToken ct = default)
         where T : class, ILabelable
     {
-        _registry.Require<T>();
+        var descriptor = _registry.Require<T>();
 
         var ids = await ResolveLabelIdsAsync(labelName, includeDescendants, ct);
         if (ids.Count == 0) return Enumerable.Empty<T>().AsQueryable();
 
-        return _db.Set<LabelLink<T>>()
-            .Where(l => ids.Contains(l.LabelId))
-            .Select(l => l.Entity)
-            .Distinct();
+        return (IQueryable<T>)descriptor.CreateQueryByLabels(_db, ids);
     }
 
     public async Task<IReadOnlyDictionary<Guid, int>> GetUsageCountsAsync(CancellationToken ct = default)

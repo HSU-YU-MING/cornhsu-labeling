@@ -19,8 +19,11 @@ public sealed class LabelRegistry
     /// <summary>連結表的表名前綴,預設 "LabelLink_";完整表名為前綴 + TypeKey。</summary>
     public string LinkTablePrefix { get; set; } = "LabelLink_";
 
-    /// <summary>註冊一個可標記型別。</summary>
-    /// <typeparam name="TEntity">實作 <see cref="ILabelable"/> 的實體型別。</typeparam>
+    /// <summary>
+    /// 註冊一個可標記型別。主鍵型別自 <see cref="ILabelable{TKey}"/> 自動推斷,
+    /// 所以只需要一個型別參數:<c>r.Labelable&lt;Note&gt;(n =&gt; n.Title)</c>。
+    /// </summary>
+    /// <typeparam name="TEntity">實作 <see cref="ILabelable{TKey}"/> 的實體型別。</typeparam>
     /// <param name="displayName">跨型別查詢時產生 <see cref="LabelHit.DisplayName"/> 的投影函式。</param>
     /// <param name="typeKey">持久化用的穩定型別鍵;預設用類別名稱,建議明確釘住以免改名時表名跟著變。</param>
     public LabelRegistry Labelable<TEntity>(
@@ -33,8 +36,10 @@ public sealed class LabelRegistry
         var key = typeKey ?? typeof(TEntity).Name;
         if (_descriptors.Any(d => d.TypeKey == key))
             throw new InvalidOperationException($"TypeKey '{key}' 已被註冊。");
+        if (_descriptors.Any(d => d.ClrType == typeof(TEntity)))
+            throw new InvalidOperationException($"型別 {typeof(TEntity).Name} 已被註冊。");
 
-        _descriptors.Add(new LabelableDescriptor<TEntity>(key, displayName));
+        _descriptors.Add(CreateDescriptor<TEntity>(key, displayName));
         return this;
     }
 
@@ -44,4 +49,28 @@ public sealed class LabelRegistry
         => _descriptors.FirstOrDefault(d => d.ClrType == typeof(TEntity))
            ?? throw new InvalidOperationException(
                $"型別 {typeof(TEntity).Name} 未註冊。請在 AddLabeling 中呼叫 r.Labelable<{typeof(TEntity).Name}>()。");
+
+    /// <summary>從 TEntity 實作的 ILabelable&lt;TKey&gt; 推斷主鍵型別,建立對應的封閉泛型描述子。</summary>
+    private static ILabelableDescriptor CreateDescriptor<TEntity>(string typeKey, Func<TEntity, string?>? displayName)
+        where TEntity : class, ILabelable
+    {
+        var keyInterfaces = typeof(TEntity).GetInterfaces()
+            .Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(ILabelable<>))
+            .ToList();
+
+        if (keyInterfaces.Count == 0)
+            throw new InvalidOperationException(
+                $"型別 {typeof(TEntity).Name} 只實作了非泛型的 ILabelable(marker)。" +
+                $"請改實作 ILabelable<TKey> 並指定主鍵型別,例如 ILabelable<int> 或 ILabelable<Guid>。");
+
+        if (keyInterfaces.Count > 1)
+            throw new InvalidOperationException(
+                $"型別 {typeof(TEntity).Name} 實作了多個 ILabelable<TKey>" +
+                $"({string.Join("、", keyInterfaces.Select(i => i.GetGenericArguments()[0].Name))})," +
+                $"無法推斷主鍵型別。請只保留一個。");
+
+        var keyType = keyInterfaces[0].GetGenericArguments()[0];
+        var descriptorType = typeof(LabelableDescriptor<,>).MakeGenericType(typeof(TEntity), keyType);
+        return (ILabelableDescriptor)Activator.CreateInstance(descriptorType, typeKey, displayName)!;
+    }
 }

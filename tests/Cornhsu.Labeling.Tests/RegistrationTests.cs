@@ -53,8 +53,30 @@ public class RegistrationTests
         });
 
         var model = db.Context.Model;
-        model.FindEntityType(typeof(LabelLink<TestNote>))!.GetTableName().Should().Be("TL_Memo");
-        model.FindEntityType(typeof(LabelLink<TestTodo>))!.GetTableName().Should().Be("TL_TestTodo");
+        model.FindEntityType(typeof(LabelLink<TestNote, Guid>))!.GetTableName().Should().Be("TL_Memo");
+        model.FindEntityType(typeof(LabelLink<TestTodo, int>))!.GetTableName().Should().Be("TL_TestTodo");
         model.FindEntityType(typeof(Label))!.GetTableName().Should().Be("MyLabels");
+    }
+
+    [Fact] // 泛型主鍵推斷
+    public void 只實作marker沒有指定主鍵型別_註冊時拋出清楚的例外()
+    {
+        var registry = new LabelRegistry();
+
+        var act = () => registry.Labelable<TestMarkerOnly>();
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*TestMarkerOnly*ILabelable<TKey>*");
+    }
+
+    [Fact] // 泛型主鍵推斷
+    public void 主鍵型別自動推斷正確()
+    {
+        var registry = new LabelRegistry();
+        registry.Labelable<TestNote>();
+        registry.Labelable<TestTodo>();
+
+        registry.Descriptors.Single(d => d.ClrType == typeof(TestNote)).KeyType.Should().Be(typeof(Guid));
+        registry.Descriptors.Single(d => d.ClrType == typeof(TestTodo)).KeyType.Should().Be(typeof(int));
     }
 }

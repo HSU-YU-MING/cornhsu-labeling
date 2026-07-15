@@ -18,7 +18,7 @@ public class IntegrityTests
         // 用 ExecuteDelete 繞過 EF change tracker,驗證的是資料庫層的 FK cascade
         await db.Context.Notes.Where(n => n.Id == note.Id).ExecuteDeleteAsync();
 
-        var remaining = await db.Context.Set<LabelLink<TestNote>>().AsNoTracking().CountAsync();
+        var remaining = await db.Context.Set<LabelLink<TestNote, Guid>>().AsNoTracking().CountAsync();
         remaining.Should().Be(0, "刪掉 Note 之後 LabelLink_TestNote 應該是空的");
 
         // 標籤本體不受影響
@@ -37,17 +37,17 @@ public class IntegrityTests
         var label = await db.Store.FindAsync("論文");
         await db.Store.DeleteAsync(label!.Id);
 
-        (await db.Context.Set<LabelLink<TestNote>>().AsNoTracking().CountAsync()).Should().Be(0);
-        (await db.Context.Set<LabelLink<TestTodo>>().AsNoTracking().CountAsync()).Should().Be(0);
+        (await db.Context.Set<LabelLink<TestNote, Guid>>().AsNoTracking().CountAsync()).Should().Be(0);
+        (await db.Context.Set<LabelLink<TestTodo, int>>().AsNoTracking().CountAsync()).Should().Be(0);
     }
 
-    [Fact] // #3
-    public async Task 插入不存在的EntityId_應噴FK違反()
+    [Fact] // #3(Guid 主鍵)
+    public async Task 插入不存在的EntityId_應噴FK違反_Guid主鍵()
     {
         using var db = new TestDb();
         var label = await db.Store.CreateAsync("論文");
 
-        db.Context.Set<LabelLink<TestNote>>().Add(new LabelLink<TestNote>
+        db.Context.Set<LabelLink<TestNote, Guid>>().Add(new LabelLink<TestNote, Guid>
         {
             LabelId = label.Id,
             EntityId = Guid.NewGuid(),   // 不存在的 Note
@@ -56,6 +56,23 @@ public class IntegrityTests
 
         var act = () => db.Context.SaveChangesAsync();
         await act.Should().ThrowAsync<DbUpdateException>("EntityId 有真外鍵,資料庫必須擋下孤兒連結");
+    }
+
+    [Fact] // #3(int 主鍵)
+    public async Task 插入不存在的EntityId_應噴FK違反_int主鍵()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文");
+
+        db.Context.Set<LabelLink<TestTodo, int>>().Add(new LabelLink<TestTodo, int>
+        {
+            LabelId = label.Id,
+            EntityId = 999_999,   // 不存在的 Todo
+            AttachedAt = DateTimeOffset.UtcNow,
+        });
+
+        var act = () => db.Context.SaveChangesAsync();
+        await act.Should().ThrowAsync<DbUpdateException>("int 主鍵的連結表同樣要有真外鍵把關");
     }
 
     [Fact] // #4

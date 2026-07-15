@@ -5,22 +5,29 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Cornhsu.Labeling.Tests;
 
-public class TestNote : ILabelable
+/// <summary>Guid 主鍵的可標記型別。</summary>
+public class TestNote : ILabelable<Guid>
 {
     public Guid Id { get; set; }
     public string Title { get; set; } = "";
 }
 
-public class TestTodo : ILabelable
+/// <summary>int 主鍵的可標記型別——與 TestNote 混用,驗證混合主鍵情境。</summary>
+public class TestTodo : ILabelable<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     public string Content { get; set; } = "";
 }
 
-/// <summary>實作了 ILabelable 但故意不註冊,用來測未註冊型別的例外。</summary>
-public class TestOrphan : ILabelable
+/// <summary>實作了 ILabelable&lt;Guid&gt; 但故意不註冊,用來測未註冊型別的例外。</summary>
+public class TestOrphan : ILabelable<Guid>
 {
     public Guid Id { get; set; }
+}
+
+/// <summary>只實作非泛型 marker,用來測「無法推斷主鍵型別」的註冊例外。</summary>
+public class TestMarkerOnly : ILabelable
+{
 }
 
 public class TestDbContext : DbContext
@@ -87,7 +94,7 @@ public sealed class TestDb : IDisposable
 
     public async Task<TestTodo> AddTodoAsync(string content = "todo")
     {
-        var todo = new TestTodo { Id = Guid.NewGuid(), Content = content };
+        var todo = new TestTodo { Content = content };   // int Id 由資料庫發號
         Context.Todos.Add(todo);
         await Context.SaveChangesAsync();
         return todo;

@@ -32,17 +32,23 @@ services.AddLabeling<AppDbContext>(r =>
 dotnet add package Cornhsu.Labeling.EntityFrameworkCore
 ```
 
-**1. 實體實作 `ILabelable`**(不要求繼承任何基底類別):
+**1. 實體實作 `ILabelable<TKey>`**(不要求繼承任何基底類別;`int`、`Guid` 等主鍵都支援,可混用):
 
 ```csharp
-public class Note : ILabelable
+public class Note : ILabelable<Guid>
 {
     public Guid Id { get; set; }
     public string Title { get; set; } = "";
 }
+
+public class TodoItem : ILabelable<int>     // 既有專案的 int 流水號主鍵直接可用
+{
+    public int Id { get; set; }
+    public string Content { get; set; } = "";
+}
 ```
 
-**2. 註冊:**
+**2. 註冊**(主鍵型別自動推斷,不用寫第二個型別參數):
 
 ```csharp
 services.AddDbContext<AppDbContext>(o => o.UseSqlite(cs));
@@ -72,6 +78,12 @@ public class AppDbContext : DbContext
 await store.AttachAsync(note, "論文", "急件");             // 標籤不存在會自動建立
 var all   = await store.FindByLabelAsync("論文");          // 跨型別,IReadOnlyList<LabelHit>
 var notes = await store.QueryByLabelAsync<Note>("論文");   // 強型別 IQueryable<Note>
+
+// 跨型別命中的主鍵型別可能不同(Note 是 Guid、TodoItem 是 int),
+// 所以 LabelHit.EntityId 是 object;需要強型別時:
+var todoIds = all
+    .Where(h => h.EntityClrType == typeof(TodoItem))
+    .Select(h => h.EntityIdAs<int>());
 ```
 
 完整可執行範例見 [samples/MinimalConsole](samples/MinimalConsole/Program.cs)。
@@ -128,7 +140,8 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 
 ## Limitations
 
-- **只支援 `Guid` 主鍵。** 泛型化主鍵會讓 API 複雜一倍;`int`/`string` 主鍵只在真的有人需要時才做。
+- **實體主鍵支援 `int`/`long`/`Guid`/`string` 等具備相等運算子的型別,可在同一個 App 混用**;但 `Label` 本體的主鍵固定是 `Guid`(它是套件自有的表)。
+- **`LabelHit.EntityId` 是 `object`**——跨型別查詢的命中可能來自不同主鍵型別,這是泛型主鍵的必要代價;用 `EntityIdAs<TKey>()` 取回強型別。
 - **跨型別查詢是 N 次查詢**(N = 已註冊型別數)。樸素版先行,實測有瓶頸再優化成 `UNION ALL`。
 - **`LabelRegistry` 必須全 App 單例。** EF Core 的 model cache 以 DbContext 型別為 key;同一個 DbContext 型別拿到不同 registry 會拿到錯的快取 model 且不會報錯。`AddLabeling` 已自動註冊為 Singleton。多租戶各自不同的可標記型別 v1 不支援(需自訂 `IModelCacheKeyFactory`)。
 - **get-or-create 標籤有競態**:兩條路徑同時建同名標籤會撞 unique index,以「捕捉例外後重讀」處理。

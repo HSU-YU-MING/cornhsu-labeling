@@ -35,7 +35,7 @@ public interface ILabelStore
     // ---- 貼標 / 撕標 ----
 
     /// <summary>把標籤貼到實體上。標籤不存在會自動建立(get-or-create);重複貼標為冪等操作。</summary>
-    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
+    /// <typeparam name="T">已註冊的可標記型別(實作 <see cref="ILabelable{TKey}"/>)。</typeparam>
     /// <param name="entity">目標實體(必須已存在於資料庫)。</param>
     /// <param name="labelNames">標籤名稱,可多個。</param>
     Task AttachAsync<T>(T entity, params string[] labelNames) where T : class, ILabelable;

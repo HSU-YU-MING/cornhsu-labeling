@@ -23,31 +23,31 @@ var db = scope.ServiceProvider.GetRequiredService<SampleDbContext>();
 db.Database.EnsureCreated();
 var store = scope.ServiceProvider.GetRequiredService<ILabelStore>();
 
-var memo = new Memo { Id = Guid.NewGuid(), Title = "讀論文" };
-var chore = new Chore { Id = Guid.NewGuid(), Description = "整理文獻資料夾" };
+var memo = new Memo { Id = Guid.NewGuid(), Title = "讀論文" };          // Guid 主鍵
+var chore = new Chore { Description = "整理文獻資料夾" };                // int 主鍵,資料庫發號
 db.AddRange(memo, chore);
 await db.SaveChangesAsync();
 
 await store.AttachAsync(memo, "論文", "急件");
 await store.AttachAsync(chore, "論文");
 
-Console.WriteLine("標了「論文」的所有東西(跨型別):");
+Console.WriteLine("標了「論文」的所有東西(跨型別、混合主鍵):");
 foreach (var hit in await store.FindByLabelAsync("論文"))
-    Console.WriteLine($"  [{hit.EntityTypeKey}] {hit.DisplayName}");
+    Console.WriteLine($"  [{hit.EntityTypeKey}] {hit.DisplayName}(Id = {hit.EntityId})");
 
 var counts = await store.GetUsageCountsAsync();
 foreach (var label in await store.GetAllAsync())
     Console.WriteLine($"標籤「{label.Name}」使用 {counts.GetValueOrDefault(label.Id)} 次");
 
-public class Memo : ILabelable
+public class Memo : ILabelable<Guid>
 {
     public Guid Id { get; set; }
     public string Title { get; set; } = "";
 }
 
-public class Chore : ILabelable
+public class Chore : ILabelable<int>
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
     public string Description { get; set; } = "";
 }
 

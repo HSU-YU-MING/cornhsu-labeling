@@ -23,6 +23,23 @@ public class QueryTests
         hits.Select(h => h.EntityTypeKey).Should().BeEquivalentTo(new[] { "TestNote", "TestTodo" });
         hits.Single(h => h.EntityTypeKey == "TestNote").DisplayName.Should().Be("讀論文");
         hits.Single(h => h.EntityTypeKey == "TestTodo").DisplayName.Should().Be("整理文獻");
+
+        // 混合主鍵:同一次查詢裡 Guid 命中與 int 命中並存,EntityIdAs 取回強型別
+        hits.Single(h => h.EntityTypeKey == "TestNote").EntityIdAs<Guid>().Should().Be(note.Id);
+        hits.Single(h => h.EntityTypeKey == "TestTodo").EntityIdAs<int>().Should().Be(todo.Id);
+    }
+
+    [Fact]
+    public async Task EntityIdAs指定錯誤型別_拋出InvalidCastException()
+    {
+        using var db = new TestDb();
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "論文");
+
+        var hit = (await db.Store.FindByLabelAsync("論文")).Single();
+
+        var act = () => hit.EntityIdAs<int>();
+        act.Should().Throw<InvalidCastException>().WithMessage("*Guid*Int32*");
     }
 
     [Fact] // #6
@@ -49,7 +66,7 @@ public class QueryTests
         await db.Store.AttachAsync(note, "論文");
         await db.Store.AttachAsync(note, "論文", "論文");
 
-        var count = await db.Context.Set<LabelLink<TestNote>>().AsNoTracking().CountAsync();
+        var count = await db.Context.Set<LabelLink<TestNote, Guid>>().AsNoTracking().CountAsync();
         count.Should().Be(1, "AttachAsync 必須是冪等的");
     }
 

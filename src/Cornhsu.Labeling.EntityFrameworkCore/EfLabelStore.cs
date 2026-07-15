@@ -11,7 +11,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
     // ---- 標籤 CRUD ----
 
-    public async Task<Label> CreateAsync(string name, string? color = null, Guid? parentId = null, CancellationToken ct = default)
+    public async Task<Label> CreateAsync(string name, string? color = null, string? icon = null, Guid? parentId = null, CancellationToken ct = default)
     {
         var normalized = Normalize(name)
             ?? throw new ArgumentException("標籤名稱不可為空白。", nameof(name));
@@ -25,6 +25,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             Id = Guid.NewGuid(),
             Name = normalized,
             Color = color,
+            Icon = icon,
             ParentId = parentId,
             CreatedAt = DateTimeOffset.UtcNow,
         };

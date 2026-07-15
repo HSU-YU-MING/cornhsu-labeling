@@ -115,6 +115,38 @@ public class DesignTimeFactory : IDesignTimeDbContextFactory<AppDbContext>
 }
 ```
 
+## 擴充 Label
+
+`Label` 刻意精簡,只有「視覺識別」層級的欄位:`Name`、`Color`、`Icon`、階層與排序。
+這是有意的邊界——**帶業務語意的欄位(標籤型別、模組/租戶隔離、權限…)套件不碰**,
+因為它無法理解、也無法替你把關這些概念。
+
+需要 app 專屬欄位時,用一張 **1:1 伴生表**指向 `Label.Id`,把套件的貼標能力與你的業務資料分開:
+
+```csharp
+// 你的伴生表:放套件不該懂的欄位
+public class LabelMeta
+{
+    public Guid LabelId { get; set; }          // 1:1 指向 Cornhsu Label
+    public Label Label { get; set; } = default!;
+    public string LabelType { get; set; } = "標籤";   // 你的業務語意
+    public string? AllowedModule { get; set; }
+}
+
+// 你自己的 DbContext 設定(與 ApplyLabelModel 並存)
+b.Entity<LabelMeta>(e =>
+{
+    e.HasKey(x => x.LabelId);
+    e.HasOne(x => x.Label).WithOne()
+     .HasForeignKey<LabelMeta>(x => x.LabelId)
+     .OnDelete(DeleteBehavior.Cascade);        // 標籤刪除時,附屬資料一起清掉
+});
+```
+
+> 為什麼不用「繼承 Label」的方式?因為那會逼整個套件泛型化、也把侵入性帶回來——
+> 就跟本套件在 §設計取捨 拒絕「要求實體繼承共同基底」是同一個理由。
+> 精簡 + 伴生表,讓不需要擴充的使用者零負擔,需要的人也有乾淨的出路。
+
 ## 設計取捨
 
 「標籤 A 貼在實體 B 上」要記在某張表,但 B 是不同的表。三條路:

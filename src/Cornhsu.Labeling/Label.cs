@@ -15,6 +15,13 @@ public class Label
     /// <summary>顏色,建議 #RRGGBB。</summary>
     public string? Color { get; set; }
 
+    /// <summary>
+    /// 圖示(純視覺,無業務語意):可放 emoji、圖示名稱或短碼,由 UI 自行解讀。
+    /// 與 <see cref="Color"/> 同層級——都是標籤的視覺識別。
+    /// 帶業務語意的欄位(型別、模組隔離、租戶…)請放你自己的伴生表,見 README「擴充 Label」。
+    /// </summary>
+    public string? Icon { get; set; }
+
     /// <summary>父標籤 Id;null 表示頂層。</summary>
     public Guid? ParentId { get; set; }
 

@@ -18,6 +18,7 @@ public static class ModelBuilderExtensions
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).IsRequired().HasMaxLength(64);
             e.Property(x => x.Color).HasMaxLength(16);
+            e.Property(x => x.Icon).HasMaxLength(128);
             e.HasIndex(x => x.Name).IsUnique();
 
             e.HasOne(x => x.Parent).WithMany(x => x.Children)

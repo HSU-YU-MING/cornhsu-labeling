@@ -6,11 +6,12 @@ public interface ILabelStore
     // ---- 標籤 CRUD ----
 
     /// <summary>建立新標籤。名稱已存在時拋出 <see cref="InvalidOperationException"/>。</summary>
-    /// <param name="name">顯示名稱,全域唯一。</param>
+    /// <param name="name">顯示名稱,全域唯一(自動去除前後空白)。</param>
     /// <param name="color">顏色,建議 #RRGGBB。</param>
+    /// <param name="icon">圖示(emoji / 圖示名稱 / 短碼,純視覺)。</param>
     /// <param name="parentId">父標籤 Id;null 表示頂層。</param>
     /// <param name="ct">取消權杖。</param>
-    Task<Label> CreateAsync(string name, string? color = null, Guid? parentId = null, CancellationToken ct = default);
+    Task<Label> CreateAsync(string name, string? color = null, string? icon = null, Guid? parentId = null, CancellationToken ct = default);
 
     /// <summary>依名稱尋找標籤;找不到回傳 null。</summary>
     /// <param name="name">標籤名稱。</param>

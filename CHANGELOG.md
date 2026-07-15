@@ -17,6 +17,8 @@
 - 測試:SQLite in-memory,涵蓋外鍵完整性、多型查詢、階層、冪等、註冊驗證(規劃書 §9.2 全 14 條)。
 
 - `UpdateAsync(labelId, l => ...)`:更新顏色/排序/父標籤(含改名唯一性檢查與父子循環防護)。
+- `Label.Icon`:視覺識別欄位(emoji / 圖示名稱 / 短碼),與 `Color` 同層級;
+  `CreateAsync` 新增 `icon` 參數。業務語意欄位請用伴生表擴充(見 README「擴充 Label」)。
 
 ### Changed
 - `ILabelableDescriptor` 公開介面縮減為純描述資訊(ClrType/KeyType/TypeKey);

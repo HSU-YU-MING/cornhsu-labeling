@@ -7,6 +7,28 @@ namespace Cornhsu.Labeling.Tests;
 public class UpdateTests
 {
     [Fact]
+    public async Task 建立時可帶入顏色與圖示()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文", color: "#2196F3", icon: "📄");
+
+        var reloaded = await db.Store.FindAsync("論文");
+        reloaded!.Color.Should().Be("#2196F3");
+        reloaded.Icon.Should().Be("📄");
+    }
+
+    [Fact]
+    public async Task 可透過Update修改圖示()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文");
+
+        await db.Store.UpdateAsync(label.Id, l => l.Icon = "🔖");
+
+        (await db.Store.FindAsync("論文"))!.Icon.Should().Be("🔖");
+    }
+
+    [Fact]
     public async Task 更新顏色與排序_存檔成功()
     {
         using var db = new TestDb();

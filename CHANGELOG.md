@@ -11,5 +11,12 @@
   - `LabelLink<TEntity>` 泛型連結實體——每個註冊型別自動產生一張具備真外鍵的 join table。
   - `LabelRegistry` / `AddLabeling<TContext>()` / `ApplyLabelModel()`。
   - `EfLabelStore`:標籤 CRUD、貼標/撕標(冪等)、跨型別查詢、強型別查詢、階層解析、使用次數統計。
+- `AttachAsync`/`DetachAsync` 新增 `IEnumerable<string> + CancellationToken` 多載。
+- 標籤名稱在所有入口自動 Trim,避免產生視覺上相同的重複標籤。
+- 函式庫內所有 await 使用 `ConfigureAwait(false)`(避免 WPF/WinForms 同步等待死鎖)。
 - 測試:SQLite in-memory,涵蓋外鍵完整性、多型查詢、階層、冪等、註冊驗證(規劃書 §9.2 全 14 條)。
+
+### Changed
+- `ILabelableDescriptor` 公開介面縮減為純描述資訊(ClrType/KeyType/TypeKey);
+  連結表操作管線改為 internal,不再是公開 API 承諾。
 - `samples/MinimalConsole`:獨立的第二個消費者。

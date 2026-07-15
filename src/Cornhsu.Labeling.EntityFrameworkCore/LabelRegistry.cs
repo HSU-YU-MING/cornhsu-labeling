@@ -7,11 +7,14 @@ namespace Cornhsu.Labeling.EntityFrameworkCore;
 /// </summary>
 public sealed class LabelRegistry
 {
-    private readonly List<ILabelableDescriptor> _descriptors = new();
+    private readonly List<ILabelableOperations> _descriptors = new();
     private bool _sealed;
 
-    /// <summary>所有已註冊型別的描述子。</summary>
+    /// <summary>所有已註冊型別的描述子(公開的僅為描述資訊)。</summary>
     public IReadOnlyList<ILabelableDescriptor> Descriptors => _descriptors;
+
+    /// <summary>內部管線視角(建表與連結表操作)。</summary>
+    internal IReadOnlyList<ILabelableOperations> Operations => _descriptors;
 
     /// <summary>Label 本體的表名,預設 "Label"。</summary>
     public string LabelTableName { get; set; } = "Label";
@@ -45,13 +48,13 @@ public sealed class LabelRegistry
 
     internal void Seal() => _sealed = true;
 
-    internal ILabelableDescriptor Require<TEntity>() where TEntity : class, ILabelable
+    internal ILabelableOperations Require<TEntity>() where TEntity : class, ILabelable
         => _descriptors.FirstOrDefault(d => d.ClrType == typeof(TEntity))
            ?? throw new InvalidOperationException(
                $"型別 {typeof(TEntity).Name} 未註冊。請在 AddLabeling 中呼叫 r.Labelable<{typeof(TEntity).Name}>()。");
 
     /// <summary>從 TEntity 實作的 ILabelable&lt;TKey&gt; 推斷主鍵型別,建立對應的封閉泛型描述子。</summary>
-    private static ILabelableDescriptor CreateDescriptor<TEntity>(string typeKey, Func<TEntity, string?>? displayName)
+    private static ILabelableOperations CreateDescriptor<TEntity>(string typeKey, Func<TEntity, string?>? displayName)
         where TEntity : class, ILabelable
     {
         var keyInterfaces = typeof(TEntity).GetInterfaces()
@@ -71,6 +74,6 @@ public sealed class LabelRegistry
 
         var keyType = keyInterfaces[0].GetGenericArguments()[0];
         var descriptorType = typeof(LabelableDescriptor<,>).MakeGenericType(typeof(TEntity), keyType);
-        return (ILabelableDescriptor)Activator.CreateInstance(descriptorType, typeKey, displayName)!;
+        return (ILabelableOperations)Activator.CreateInstance(descriptorType, typeKey, displayName)!;
     }
 }

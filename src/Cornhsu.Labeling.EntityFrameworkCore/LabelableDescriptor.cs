@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Cornhsu.Labeling.EntityFrameworkCore;
 
-internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableDescriptor
+internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
     where TEntity : class, ILabelable<TKey>
     where TKey : notnull
 {
@@ -43,7 +43,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableDescriptor
             .Where(l => labelIds.Contains(l.LabelId))
             .Select(l => l.Entity)
             .Distinct()
-            .ToListAsync(ct);
+            .ToListAsync(ct).ConfigureAwait(false);
 
         return entities
             .Select(e => new LabelHit(typeof(TEntity), TypeKey, e.Id, _displayName?.Invoke(e)))
@@ -54,7 +54,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableDescriptor
         => await db.Set<LabelLink<TEntity, TKey>>()
             .GroupBy(l => l.LabelId)
             .Select(g => new { g.Key, Count = g.Count() })
-            .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
+            .ToDictionaryAsync(x => x.Key, x => x.Count, ct).ConfigureAwait(false);
 
     public async Task AddMissingLinksAsync(
         DbContext db, ILabelable entity, IReadOnlyList<Label> labels, CancellationToken ct)
@@ -65,7 +65,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableDescriptor
         foreach (var label in labels)
         {
             // 複合主鍵直接 Find:同時看得到資料庫與尚未存檔的追蹤項目 → 冪等
-            var existing = await links.FindAsync(new object[] { label.Id, id }, ct);
+            var existing = await links.FindAsync(new object[] { label.Id, id }, ct).ConfigureAwait(false);
             if (existing is not null) continue;
 
             links.Add(new LabelLink<TEntity, TKey>
@@ -85,7 +85,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableDescriptor
 
         foreach (var labelId in labelIds)
         {
-            var link = await links.FindAsync(new object[] { labelId, id }, ct);
+            var link = await links.FindAsync(new object[] { labelId, id }, ct).ConfigureAwait(false);
             if (link is not null) links.Remove(link);
         }
     }
@@ -95,7 +95,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableDescriptor
             .Where(EntityIdEquals(((TEntity)entity).Id))
             .Select(l => l.Label)
             .OrderBy(l => l.SortOrder).ThenBy(l => l.Name)
-            .ToListAsync(ct);
+            .ToListAsync(ct).ConfigureAwait(false);
 
     public IQueryable CreateQueryByLabels(DbContext db, IReadOnlyCollection<Guid> labelIds)
         => db.Set<LabelLink<TEntity, TKey>>()

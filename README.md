@@ -144,6 +144,7 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 - **`LabelHit.EntityId` 是 `object`**——跨型別查詢的命中可能來自不同主鍵型別,這是泛型主鍵的必要代價;用 `EntityIdAs<TKey>()` 取回強型別。
 - **跨型別查詢是 N 次查詢**(N = 已註冊型別數)。樸素版先行,實測有瓶頸再優化成 `UNION ALL`。
 - **`LabelRegistry` 必須全 App 單例。** EF Core 的 model cache 以 DbContext 型別為 key;同一個 DbContext 型別拿到不同 registry 會拿到錯的快取 model 且不會報錯。`AddLabeling` 已自動註冊為 Singleton。多租戶各自不同的可標記型別 v1 不支援(需自訂 `IModelCacheKeyFactory`)。
+- **標籤名稱會自動去除前後空白**(所有輸入入口一致);**大小寫視為不同標籤**,由資料庫 collation 決定(SQLite 預設區分大小寫)。
 - **get-or-create 標籤有競態**:兩條路徑同時建同名標籤會撞 unique index,以「捕捉例外後重讀」處理。
 - **只支援 EF Core 8+**(相依版本寫 8.0.0 最低版,消費端用 EF Core 9/10 會自動 unify)。
 - 測試請用 **SQLite in-memory,不要用 EF InMemory Provider**——後者不執行外鍵約束,測不到本套件的核心保證。

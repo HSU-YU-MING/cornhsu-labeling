@@ -34,17 +34,32 @@ public interface ILabelStore
 
     // ---- 貼標 / 撕標 ----
 
-    /// <summary>把標籤貼到實體上。標籤不存在會自動建立(get-or-create);重複貼標為冪等操作。</summary>
+    /// <summary>把標籤貼到實體上。標籤不存在會自動建立(get-or-create);重複貼標為冪等操作。
+    /// 名稱會自動去除前後空白。</summary>
     /// <typeparam name="T">已註冊的可標記型別(實作 <see cref="ILabelable{TKey}"/>)。</typeparam>
     /// <param name="entity">目標實體(必須已存在於資料庫)。</param>
     /// <param name="labelNames">標籤名稱,可多個。</param>
     Task AttachAsync<T>(T entity, params string[] labelNames) where T : class, ILabelable;
+
+    /// <summary>同 <see cref="AttachAsync{T}(T, string[])"/>,可傳入取消權杖。</summary>
+    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
+    /// <param name="entity">目標實體(必須已存在於資料庫)。</param>
+    /// <param name="labelNames">標籤名稱集合。</param>
+    /// <param name="ct">取消權杖。</param>
+    Task AttachAsync<T>(T entity, IEnumerable<string> labelNames, CancellationToken ct = default) where T : class, ILabelable;
 
     /// <summary>把標籤從實體上撕下。不存在的標籤或未貼上的標籤會被忽略。</summary>
     /// <typeparam name="T">已註冊的可標記型別。</typeparam>
     /// <param name="entity">目標實體。</param>
     /// <param name="labelNames">標籤名稱,可多個。</param>
     Task DetachAsync<T>(T entity, params string[] labelNames) where T : class, ILabelable;
+
+    /// <summary>同 <see cref="DetachAsync{T}(T, string[])"/>,可傳入取消權杖。</summary>
+    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
+    /// <param name="entity">目標實體。</param>
+    /// <param name="labelNames">標籤名稱集合。</param>
+    /// <param name="ct">取消權杖。</param>
+    Task DetachAsync<T>(T entity, IEnumerable<string> labelNames, CancellationToken ct = default) where T : class, ILabelable;
 
     /// <summary>取得實體目前貼著的所有標籤。</summary>
     /// <typeparam name="T">已註冊的可標記型別。</typeparam>

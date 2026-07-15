@@ -25,7 +25,7 @@ public static class ModelBuilderExtensions
              .OnDelete(DeleteBehavior.Restrict);   // 有子標籤時不准直接刪父標籤
         });
 
-        foreach (var d in registry.Descriptors)
+        foreach (var d in registry.Operations)
             d.ConfigureModel(b, registry);
 
         return b;

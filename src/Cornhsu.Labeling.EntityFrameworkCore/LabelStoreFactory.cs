@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Cornhsu.Labeling.EntityFrameworkCore;
 
@@ -22,11 +23,24 @@ public static class LabelStoreFactory
     /// 可標記型別的註冊表。必須與建立 model 用的是**同一個實例**,
     /// 且全 App 只能有一份(EF 的 model cache 以 DbContext 型別為 key)。
     /// </param>
-    public static ILabelStore Create<TContext>(TContext context, LabelRegistry registry)
+    /// <param name="logger">可選的 logger;null 表示不記錄(NullLogger)。</param>
+    public static ILabelStore Create<TContext>(TContext context, LabelRegistry registry,
+        ILogger<ILabelStore>? logger = null)
         where TContext : DbContext
     {
         if (context is null) throw new ArgumentNullException(nameof(context));
         if (registry is null) throw new ArgumentNullException(nameof(registry));
-        return new EfLabelStore<TContext>(context, registry);
+        return new EfLabelStore<TContext>(context, registry, logger is null ? null : new LoggerAdapter<TContext>(logger));
+    }
+
+    /// <summary>把呼叫端的 ILogger&lt;ILabelStore&gt; 轉成內部型別的 logger(內部型別不公開)。</summary>
+    private sealed class LoggerAdapter<TContext> : ILogger<EfLabelStore<TContext>> where TContext : DbContext
+    {
+        private readonly ILogger _inner;
+        public LoggerAdapter(ILogger inner) => _inner = inner;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => _inner.BeginScope(state);
+        public bool IsEnabled(LogLevel logLevel) => _inner.IsEnabled(logLevel);
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => _inner.Log(logLevel, eventId, state, exception, formatter);
     }
 }

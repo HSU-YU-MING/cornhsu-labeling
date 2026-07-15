@@ -4,10 +4,12 @@
     <Project Path="samples/MinimalConsole/MinimalConsole.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Cornhsu.Labeling.Analyzers/Cornhsu.Labeling.Analyzers.csproj" />
     <Project Path="src/Cornhsu.Labeling.EntityFrameworkCore/Cornhsu.Labeling.EntityFrameworkCore.csproj" />
     <Project Path="src/Cornhsu.Labeling/Cornhsu.Labeling.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Cornhsu.Labeling.Analyzers.Tests/Cornhsu.Labeling.Analyzers.Tests.csproj" />
     <Project Path="tests/Cornhsu.Labeling.Tests/Cornhsu.Labeling.Tests.csproj" />
   </Folder>
 </Solution>

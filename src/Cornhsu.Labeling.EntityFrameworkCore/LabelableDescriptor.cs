@@ -74,6 +74,37 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         }
     }
 
+    public async Task AddMissingLinksManyAsync(
+        DbContext db, IReadOnlyList<ILabelable> entities, IReadOnlyList<Label> labels, CancellationToken ct)
+    {
+        var typed = entities.Cast<TEntity>().ToList();
+        var entityIds = typed.Select(e => e.Id).Distinct().ToList();
+        var labelIds = labels.Select(l => l.Id).ToList();
+        var links = db.Set<LabelLink<TEntity, TKey>>();
+
+        // 既有連結一次撈回,避免 N×M 次逐鍵查詢
+        var existing = await links.AsNoTracking()
+            .Where(l => labelIds.Contains(l.LabelId) && entityIds.Contains(l.EntityId))
+            .Select(l => new { l.LabelId, l.EntityId })
+            .ToListAsync(ct).ConfigureAwait(false);
+        var have = existing.Select(x => (x.LabelId, x.EntityId)).ToHashSet();
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var entity in typed)
+        {
+            foreach (var label in labels)
+            {
+                if (!have.Add((label.Id, entity.Id))) continue;   // 已存在或本批已加 → 略過(冪等)
+                links.Add(new LabelLink<TEntity, TKey>
+                {
+                    LabelId = label.Id,
+                    EntityId = entity.Id,
+                    AttachedAt = now,
+                });
+            }
+        }
+    }
+
     public async Task RemoveLinksAsync(
         DbContext db, ILabelable entity, IReadOnlyCollection<Guid> labelIds, CancellationToken ct)
     {

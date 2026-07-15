@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] — M5 打磨
+
+### Added
+- **Roslyn Analyzer 隨 `Cornhsu.Labeling` 套件出貨**(安裝即生效):
+  `CHSU001` 實作了 `ILabelable<TKey>` 但編譯單元內沒有 `r.Labelable<T>()` 註冊 → 編譯警告;
+  `CHSU002` 只實作非泛型 marker(註冊必拋例外)→ 編譯警告。
+- `AttachManyAsync(entities, labelNames)`:批次貼標——標籤解析一次、既有連結一次查詢、
+  單次 SaveChanges;冪等,已貼過的組合自動略過。
+- 可選 `ILogger`:DI 路徑自動注入(有註冊 logging 就會用),`LabelStoreFactory.Create`
+  加可選 logger 參數。auto-create 標籤記 Information(提醒策展式 App 關掉
+  AutoCreateLabels),建立/刪除記 Debug。
+- CI 新增 **EF Core 9 / 10 matrix**:真的引用 EF 9(net8)與 EF 10(net10)跑整套測試,
+  不是只換 SDK。測試專案以 `-p:CornhsuEfVersion` / `-p:CornhsuTestTfm` 參數化。
+
 ## [0.3.0] — 2026-07-15
 
 > v1.0 前置清單全數完成的版本;讓消費端先跑一陣子,穩定後以同內容升 1.0.0。

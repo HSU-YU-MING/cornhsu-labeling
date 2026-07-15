@@ -18,6 +18,34 @@ jobs:
       # sample 一定要跟著建置——它是抽象是否成立的哨兵
       - run: dotnet run --project samples/MinimalConsole -c Release
 
+  # EF Core 9/10:真的引用新版 EF 跑同一套測試(不是只換 SDK)
+  test-ef-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ef: "9.0.*"
+            tfm: net8.0     # EF 9 支援 net8
+            sdk: |
+              8.0.x
+              9.0.x
+          - ef: "10.0.*"
+            tfm: net10.0
+            sdk: |
+              8.0.x
+              10.0.x
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - run: >
+          dotnet test tests/Cornhsu.Labeling.Tests -c Release
+          -p:CornhsuTestTfm=${{ matrix.tfm }}
+          -p:CornhsuEfVersion=${{ matrix.ef }}
+          -p:CornhsuDiVersion=${{ matrix.ef }}
+
   # 同一套測試跑在真的 PostgreSQL 上(名稱 collation、DateTimeOffset、Guid 行為都不同)
   test-postgres:
     runs-on: ubuntu-latest

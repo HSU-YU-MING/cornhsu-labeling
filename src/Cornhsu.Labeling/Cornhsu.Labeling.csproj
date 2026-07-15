@@ -10,4 +10,13 @@
     <PackageReference Include="Nullable" Version="1.3.1" PrivateAssets="all" />
     <PackageReference Include="IsExternalInit" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
+
+  <!-- Roslyn Analyzer 隨套件出貨(CHSU001 未註冊 / CHSU002 marker-only):
+       只確保建置順序,不當一般組件參考;dll 打進 analyzers/dotnet/cs -->
+  <ItemGroup>
+    <ProjectReference Include="..\Cornhsu.Labeling.Analyzers\Cornhsu.Labeling.Analyzers.csproj"
+                      ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <None Include="..\Cornhsu.Labeling.Analyzers\bin\$(Configuration)\netstandard2.0\Cornhsu.Labeling.Analyzers.dll"
+          Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
 </Project>

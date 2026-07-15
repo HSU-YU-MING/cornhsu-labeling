@@ -90,6 +90,9 @@ var labelsByNote = await store.GetLabelsOfManyAsync(visibleNotes);
 foreach (var n in visibleNotes)
     Render(n, labelsByNote[n]);                            // 每個實體保證有項目(可能為空清單)
 
+// 批次貼標(多選後「全部加上急件」;冪等、單次 SaveChanges):
+await store.AttachManyAsync(selectedNotes, new[] { "急件" });
+
 // 「策展式」標籤的 App(標籤帶顏色/圖示、由管理介面精心建立)可停用自動建立:
 // r.AutoCreateLabels = false;   ← 註冊時設定
 // 之後 AttachAsync 遇到不存在的標籤會拋出清楚的例外,而不是默默建一個裸標籤
@@ -211,6 +214,18 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 跨型別查詢的效能代價是真的(N 個型別 = N 次查詢),但它是**可測量、可優化**的;而失去外鍵完整性是**不可逆的架構債**。用效能換正確性,划算。
 
 另一個正規化紅利:標籤名稱只存一份,所有連結都用 `LabelId` 指向它,所以「重新命名標籤」是一次 O(1) 的 UPDATE,不需要任何 cascade。
+
+## 編譯期防呆(Roslyn Analyzer)
+
+套件內建 analyzer,安裝即生效,兩條規則:
+
+| 規則 | 情境 | 為什麼 |
+|---|---|---|
+| `CHSU001` | 型別實作了 `ILabelable<TKey>`,但編譯單元內沒有 `r.Labelable<T>()` 註冊 | 執行期貼標/查詢會拋「型別未註冊」——把錯誤提前到編譯期 |
+| `CHSU002` | 型別只實作了非泛型 `ILabelable`(marker) | 註冊時必因「無法推斷主鍵型別」拋例外 |
+
+註冊發生在其他組件時 `CHSU001` 會誤報,請用 `#pragma warning disable CHSU001`
+或 .editorconfig 對該型別靜音。
 
 ## 效能
 

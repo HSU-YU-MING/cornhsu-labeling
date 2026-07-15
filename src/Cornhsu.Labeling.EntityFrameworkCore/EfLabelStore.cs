@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Cornhsu.Labeling.EntityFrameworkCore;
 
@@ -6,8 +8,10 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 {
     private readonly TContext _db;
     private readonly LabelRegistry _registry;
+    private readonly ILogger _logger;
 
-    public EfLabelStore(TContext db, LabelRegistry registry) => (_db, _registry) = (db, registry);
+    public EfLabelStore(TContext db, LabelRegistry registry, ILogger<EfLabelStore<TContext>>? logger = null)
+        => (_db, _registry, _logger) = (db, registry, logger ?? NullLogger<EfLabelStore<TContext>>.Instance);
 
     // ---- 標籤 CRUD ----
 
@@ -37,6 +41,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         };
         _db.Set<Label>().Add(label);
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        _logger.LogDebug("已建立標籤 '{Name}'(Id: {Id})", label.Name, label.Id);
         return label;
     }
 
@@ -115,6 +120,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
         _db.Set<Label>().Remove(label);
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);   // 各型別的連結由 cascade delete 自動清除
+        _logger.LogDebug("已刪除標籤 '{Name}'(Id: {Id})", label.Name, labelId);
     }
 
     // ---- 貼標 / 撕標 ----
@@ -132,6 +138,25 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var labels = await GetOrCreateLabelsAsync(labelNames, ct).ConfigureAwait(false);
 
         await descriptor.AddMissingLinksAsync(_db, entity, labels, ct).ConfigureAwait(false);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task AttachManyAsync<T>(IEnumerable<T> entities, IEnumerable<string> labelNames, CancellationToken ct = default)
+        where T : class, ILabelable
+    {
+        if (entities is null) throw new ArgumentNullException(nameof(entities));
+        if (labelNames is null) throw new ArgumentNullException(nameof(labelNames));
+
+        var descriptor = _registry.Require<T>();
+        var list = new List<ILabelable>();
+        foreach (var entity in entities)
+            list.Add(entity ?? throw new ArgumentException("實體集合中含有 null。", nameof(entities)));
+        if (list.Count == 0) return;
+
+        var labels = await GetOrCreateLabelsAsync(labelNames, ct).ConfigureAwait(false);
+        if (labels.Count == 0) return;
+
+        await descriptor.AddMissingLinksManyAsync(_db, list, labels, ct).ConfigureAwait(false);
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
@@ -363,6 +388,8 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                 try
                 {
                     await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+                    _logger.LogInformation(
+                        "貼標時自動建立了標籤 '{Name}'(AutoCreateLabels 已啟用;策展式 App 建議設為 false)", name);
                 }
                 catch (DbUpdateException)
                 {

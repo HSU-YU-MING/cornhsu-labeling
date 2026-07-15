@@ -59,6 +59,18 @@ public interface ILabelStore
     /// <param name="ct">取消權杖。</param>
     Task AttachAsync<T>(T entity, IEnumerable<string> labelNames, CancellationToken ct = default) where T : class, ILabelable;
 
+    /// <summary>
+    /// 批次貼標:把同一組標籤貼到多個實體上(清單多選後「全部加上急件」的場景)。
+    /// 標籤只解析一次、既有連結一次查詢、單次 SaveChanges;冪等,已貼過的組合自動略過。
+    /// 標籤不存在時的行為與 <see cref="AttachAsync{T}(T, string[])"/> 相同(依 AutoCreateLabels)。
+    /// </summary>
+    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
+    /// <param name="entities">目標實體集合(都必須已存在於資料庫);空集合直接返回。</param>
+    /// <param name="labelNames">標籤名稱集合;空集合直接返回。</param>
+    /// <param name="ct">取消權杖。</param>
+    Task AttachManyAsync<T>(IEnumerable<T> entities, IEnumerable<string> labelNames, CancellationToken ct = default)
+        where T : class, ILabelable;
+
     /// <summary>把標籤從實體上撕下。不存在的標籤或未貼上的標籤會被忽略。</summary>
     /// <typeparam name="T">已註冊的可標記型別。</typeparam>
     /// <param name="entity">目標實體。</param>

@@ -25,6 +25,9 @@ internal interface ILabelableOperations : ILabelableDescriptor
     /// <summary>為實體補上尚未存在的連結(冪等;不呼叫 SaveChanges)。</summary>
     Task AddMissingLinksAsync(DbContext db, ILabelable entity, IReadOnlyList<Label> labels, CancellationToken ct);
 
+    /// <summary>批次版:為多個實體補上尚未存在的連結,既有連結一次查詢(冪等;不呼叫 SaveChanges)。</summary>
+    Task AddMissingLinksManyAsync(DbContext db, IReadOnlyList<ILabelable> entities, IReadOnlyList<Label> labels, CancellationToken ct);
+
     /// <summary>移除實體與指定標籤之間的連結(不呼叫 SaveChanges)。</summary>
     Task RemoveLinksAsync(DbContext db, ILabelable entity, IReadOnlyCollection<Guid> labelIds, CancellationToken ct);
 

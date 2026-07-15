@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/samples/">
+    <Project Path="samples/Benchmark/Benchmark.csproj" />
     <Project Path="samples/MinimalConsole/MinimalConsole.csproj" />
   </Folder>
   <Folder Name="/src/">

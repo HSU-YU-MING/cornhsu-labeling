@@ -6,6 +6,9 @@ namespace Cornhsu.Labeling;
 /// </summary>
 public class Label
 {
+    /// <summary>名稱長度上限。建立與改名時主動驗證,不依賴資料庫是否強制(SQLite 不強制)。</summary>
+    public const int MaxNameLength = 64;
+
     /// <summary>主鍵。</summary>
     public Guid Id { get; set; }
 

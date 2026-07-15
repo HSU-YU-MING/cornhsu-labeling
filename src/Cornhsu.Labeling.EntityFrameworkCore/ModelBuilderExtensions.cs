@@ -16,7 +16,7 @@ public static class ModelBuilderExtensions
         {
             e.ToTable(registry.LabelTableName);
             e.HasKey(x => x.Id);
-            e.Property(x => x.Name).IsRequired().HasMaxLength(64);
+            e.Property(x => x.Name).IsRequired().HasMaxLength(Label.MaxNameLength);
             e.Property(x => x.Color).HasMaxLength(16);
             e.Property(x => x.Icon).HasMaxLength(128);
             e.HasIndex(x => x.Name).IsUnique();

@@ -78,6 +78,18 @@ public interface ILabelStore
     /// <param name="ct">取消權杖。</param>
     Task<IReadOnlyList<Label>> GetLabelsOfAsync<T>(T entity, CancellationToken ct = default) where T : class, ILabelable;
 
+    /// <summary>
+    /// 批次取得多個實體各自的標籤(一次查詢),解掉清單畫面逐筆呼叫
+    /// <see cref="GetLabelsOfAsync{T}"/> 的 N+1 問題。
+    /// 回傳字典以傳入的實體「實例」為鍵(參考相等),每個實體都保證有對應項目,
+    /// 沒有標籤時為空清單。
+    /// </summary>
+    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
+    /// <param name="entities">目標實體集合;空集合回傳空字典。</param>
+    /// <param name="ct">取消權杖。</param>
+    Task<IReadOnlyDictionary<T, IReadOnlyList<Label>>> GetLabelsOfManyAsync<T>(
+        IEnumerable<T> entities, CancellationToken ct = default) where T : class, ILabelable;
+
     // ---- 查詢 ----
 
     /// <summary>跨型別查詢:回傳所有貼著指定標籤的實體(以 <see cref="LabelHit"/> 表示)。</summary>
@@ -92,6 +104,33 @@ public interface ILabelStore
     /// <param name="includeDescendants">是否包含子孫標籤命中的實體。</param>
     /// <param name="ct">取消權杖。</param>
     Task<IQueryable<T>> QueryByLabelAsync<T>(string labelName, bool includeDescendants = true, CancellationToken ct = default) where T : class, ILabelable;
+
+    /// <summary>
+    /// 多標籤跨型別查詢:「同時標了論文+急件」(<see cref="LabelMatch.All"/>)或
+    /// 「標了論文或急件任一」(<see cref="LabelMatch.Any"/>)。
+    /// <paramref name="includeDescendants"/> 為 true 時,每個名稱代表「該標籤或其任一子孫」。
+    /// 空集合回傳空結果;<see cref="LabelMatch.All"/> 模式下任一名稱不存在時結果必為空。
+    /// </summary>
+    /// <param name="labelNames">標籤名稱集合。</param>
+    /// <param name="match">匹配模式(AND / OR),預設 <see cref="LabelMatch.Any"/>。</param>
+    /// <param name="includeDescendants">是否包含子孫標籤命中的實體。</param>
+    /// <param name="ct">取消權杖。</param>
+    Task<IReadOnlyList<LabelHit>> FindByLabelsAsync(
+        IEnumerable<string> labelNames, LabelMatch match = LabelMatch.Any,
+        bool includeDescendants = true, CancellationToken ct = default);
+
+    /// <summary>
+    /// 多標籤單型別強型別查詢,語意同 <see cref="FindByLabelsAsync"/>;
+    /// 回傳可續接 Where/OrderBy/Skip 的 <see cref="IQueryable{T}"/>。
+    /// </summary>
+    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
+    /// <param name="labelNames">標籤名稱集合。</param>
+    /// <param name="match">匹配模式(AND / OR),預設 <see cref="LabelMatch.Any"/>。</param>
+    /// <param name="includeDescendants">是否包含子孫標籤命中的實體。</param>
+    /// <param name="ct">取消權杖。</param>
+    Task<IQueryable<T>> QueryByLabelsAsync<T>(
+        IEnumerable<string> labelNames, LabelMatch match = LabelMatch.Any,
+        bool includeDescendants = true, CancellationToken ct = default) where T : class, ILabelable;
 
     /// <summary>統計每個標籤的使用次數(跨所有已註冊型別加總),供 tag cloud 等視覺化使用。</summary>
     /// <param name="ct">取消權杖。</param>

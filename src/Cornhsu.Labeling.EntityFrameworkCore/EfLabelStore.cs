@@ -15,10 +15,15 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     {
         var normalized = Normalize(name)
             ?? throw new ArgumentException("標籤名稱不可為空白。", nameof(name));
+        ValidateNameLength(normalized);
 
         var existing = await _db.Set<Label>().FirstOrDefaultAsync(l => l.Name == normalized, ct).ConfigureAwait(false);
         if (existing is not null)
             throw new InvalidOperationException($"標籤 '{normalized}' 已存在(Id: {existing.Id})。");
+
+        if (parentId is not null
+            && !await _db.Set<Label>().AnyAsync(l => l.Id == parentId, ct).ConfigureAwait(false))
+            throw new InvalidOperationException($"父標籤 {parentId} 不存在。");
 
         var label = new Label
         {
@@ -51,6 +56,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     {
         var normalized = Normalize(newName)
             ?? throw new ArgumentException("標籤名稱不可為空白。", nameof(newName));
+        ValidateNameLength(normalized);
 
         var label = await _db.Set<Label>().FindAsync(new object[] { labelId }, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"找不到標籤 {labelId}。");
@@ -82,6 +88,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         {
             var normalized = Normalize(label.Name)
                 ?? throw new ArgumentException("標籤名稱不可為空白。", nameof(update));
+            ValidateNameLength(normalized);
             var taken = await _db.Set<Label>().AnyAsync(l => l.Name == normalized && l.Id != labelId, ct).ConfigureAwait(false);
             if (taken)
                 throw new InvalidOperationException($"標籤名稱 '{normalized}' 已被使用。");
@@ -115,6 +122,9 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     public async Task AttachAsync<T>(T entity, IEnumerable<string> labelNames, CancellationToken ct = default)
         where T : class, ILabelable
     {
+        if (entity is null) throw new ArgumentNullException(nameof(entity));
+        if (labelNames is null) throw new ArgumentNullException(nameof(labelNames));
+
         var descriptor = _registry.Require<T>();                      // 未註冊 → 清楚的例外
         var labels = await GetOrCreateLabelsAsync(labelNames, ct).ConfigureAwait(false);
 
@@ -128,6 +138,9 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     public async Task DetachAsync<T>(T entity, IEnumerable<string> labelNames, CancellationToken ct = default)
         where T : class, ILabelable
     {
+        if (entity is null) throw new ArgumentNullException(nameof(entity));
+        if (labelNames is null) throw new ArgumentNullException(nameof(labelNames));
+
         var descriptor = _registry.Require<T>();
 
         var names = NormalizeMany(labelNames);
@@ -145,32 +158,68 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
     public Task<IReadOnlyList<Label>> GetLabelsOfAsync<T>(T entity, CancellationToken ct = default)
         where T : class, ILabelable
-        => _registry.Require<T>().GetLabelsAsync(_db, entity, ct);
+        => entity is null
+            ? throw new ArgumentNullException(nameof(entity))
+            : _registry.Require<T>().GetLabelsAsync(_db, entity, ct);
+
+    public async Task<IReadOnlyDictionary<T, IReadOnlyList<Label>>> GetLabelsOfManyAsync<T>(
+        IEnumerable<T> entities, CancellationToken ct = default) where T : class, ILabelable
+    {
+        if (entities is null) throw new ArgumentNullException(nameof(entities));
+
+        var descriptor = _registry.Require<T>();
+        var list = new List<ILabelable>();
+        foreach (var entity in entities)
+            list.Add(entity ?? throw new ArgumentException("實體集合中含有 null。", nameof(entities)));
+
+        var result = new Dictionary<T, IReadOnlyList<Label>>(ReferenceEqualityComparer.Instance);
+        if (list.Count == 0) return result;
+
+        var raw = await descriptor.GetLabelsManyAsync(_db, list, ct).ConfigureAwait(false);
+        foreach (var pair in raw)
+            result[(T)pair.Key] = pair.Value;
+        return result;
+    }
 
     // ---- 查詢 ----
 
-    public async Task<IReadOnlyList<LabelHit>> FindByLabelAsync(
+    public Task<IReadOnlyList<LabelHit>> FindByLabelAsync(
         string labelName, bool includeDescendants = true, CancellationToken ct = default)
+        => FindByLabelsAsync(new[] { labelName }, LabelMatch.Any, includeDescendants, ct);
+
+    public Task<IQueryable<T>> QueryByLabelAsync<T>(
+        string labelName, bool includeDescendants = true, CancellationToken ct = default)
+        where T : class, ILabelable
+        => QueryByLabelsAsync<T>(new[] { labelName }, LabelMatch.Any, includeDescendants, ct);
+
+    public async Task<IReadOnlyList<LabelHit>> FindByLabelsAsync(
+        IEnumerable<string> labelNames, LabelMatch match = LabelMatch.Any,
+        bool includeDescendants = true, CancellationToken ct = default)
     {
-        var ids = await ResolveLabelIdsAsync(labelName, includeDescendants, ct).ConfigureAwait(false);
-        if (ids.Count == 0) return Array.Empty<LabelHit>();
+        if (labelNames is null) throw new ArgumentNullException(nameof(labelNames));
+
+        var groups = await ResolveLabelIdGroupsAsync(labelNames, includeDescendants, match, ct).ConfigureAwait(false);
+        if (groups is null) return Array.Empty<LabelHit>();
 
         var hits = new List<LabelHit>();
-        foreach (var d in _registry.Operations)                       // N 次查詢,M4 實測後再決定是否優化
-            hits.AddRange(await d.QueryHitsAsync(_db, ids, ct).ConfigureAwait(false));
+        foreach (var d in _registry.Operations)                       // N 次查詢;benchmark 實測 10k×5 型別 ~19ms,夠用
+            hits.AddRange(await d.QueryHitsAsync(_db, groups, match, ct).ConfigureAwait(false));
         return hits;
     }
 
-    public async Task<IQueryable<T>> QueryByLabelAsync<T>(
-        string labelName, bool includeDescendants = true, CancellationToken ct = default)
+    public async Task<IQueryable<T>> QueryByLabelsAsync<T>(
+        IEnumerable<string> labelNames, LabelMatch match = LabelMatch.Any,
+        bool includeDescendants = true, CancellationToken ct = default)
         where T : class, ILabelable
     {
+        if (labelNames is null) throw new ArgumentNullException(nameof(labelNames));
+
         var descriptor = _registry.Require<T>();
 
-        var ids = await ResolveLabelIdsAsync(labelName, includeDescendants, ct).ConfigureAwait(false);
-        if (ids.Count == 0) return Enumerable.Empty<T>().AsQueryable();
+        var groups = await ResolveLabelIdGroupsAsync(labelNames, includeDescendants, match, ct).ConfigureAwait(false);
+        if (groups is null) return Enumerable.Empty<T>().AsQueryable();
 
-        return (IQueryable<T>)descriptor.CreateQueryByLabels(_db, ids);
+        return (IQueryable<T>)descriptor.CreateQueryByLabels(_db, groups, match);
     }
 
     public async Task<IReadOnlyDictionary<Guid, int>> GetUsageCountsAsync(CancellationToken ct = default)
@@ -220,44 +269,64 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         }
     }
 
-    /// <summary>找到標籤本身;若 includeDescendants 則走訪階層收集所有子孫標籤 Id。</summary>
-    private async Task<List<Guid>> ResolveLabelIdsAsync(string labelName, bool includeDescendants, CancellationToken ct)
+    /// <summary>
+    /// 把名稱集合解析成標籤 Id 群組:每個名稱一組,若 includeDescendants 則走訪階層收集子孫。
+    /// 回傳 null 表示「結果必為空」:沒有任何有效名稱、Any 模式下全部名稱都不存在,
+    /// 或 All 模式下任一名稱不存在(缺一個就不可能同時滿足)。
+    /// </summary>
+    private async Task<List<IReadOnlyCollection<Guid>>?> ResolveLabelIdGroupsAsync(
+        IEnumerable<string> labelNames, bool includeDescendants, LabelMatch match, CancellationToken ct)
     {
-        var normalized = Normalize(labelName);
-        if (normalized is null) return new List<Guid>();
+        var names = NormalizeMany(labelNames);
+        if (names.Count == 0) return null;
 
-        if (!includeDescendants)
-        {
-            var id = await _db.Set<Label>()
-                .Where(l => l.Name == normalized)
-                .Select(l => (Guid?)l.Id)
-                .FirstOrDefaultAsync(ct).ConfigureAwait(false);
-            return id is null ? new List<Guid>() : new List<Guid> { id.Value };
-        }
-
-        // 標籤數量通常很小,一次撈出 (Id, ParentId) 在記憶體走訪最簡單也最不容易寫錯
+        // 標籤數量通常很小,一次撈出 (Id, ParentId, Name) 在記憶體解析最簡單也最不容易寫錯
         var all = await _db.Set<Label>()
             .Select(l => new { l.Id, l.ParentId, l.Name })
             .ToListAsync(ct).ConfigureAwait(false);
 
-        var root = all.FirstOrDefault(l => l.Name == normalized);
-        if (root is null) return new List<Guid>();
-
+        var byName = all.ToDictionary(l => l.Name, l => l.Id);
         var byParent = all.Where(l => l.ParentId != null).ToLookup(l => l.ParentId!.Value);
-        var result = new List<Guid>();
-        var seen = new HashSet<Guid>();
-        var queue = new Queue<Guid>();
-        queue.Enqueue(root.Id);
 
-        while (queue.Count > 0)
+        var groups = new List<IReadOnlyCollection<Guid>>();
+        foreach (var name in names)
         {
-            var id = queue.Dequeue();
-            if (!seen.Add(id)) continue;   // 防禦資料異常造成的循環
-            result.Add(id);
-            foreach (var child in byParent[id])
-                queue.Enqueue(child.Id);
+            if (!byName.TryGetValue(name, out var rootId))
+            {
+                if (match == LabelMatch.All) return null;   // 缺一個名稱 → AND 不可能滿足
+                continue;                                    // OR:略過不存在的名稱
+            }
+
+            if (!includeDescendants)
+            {
+                groups.Add(new[] { rootId });
+                continue;
+            }
+
+            var group = new List<Guid>();
+            var seen = new HashSet<Guid>();
+            var queue = new Queue<Guid>();
+            queue.Enqueue(rootId);
+            while (queue.Count > 0)
+            {
+                var id = queue.Dequeue();
+                if (!seen.Add(id)) continue;   // 防禦資料異常造成的循環
+                group.Add(id);
+                foreach (var child in byParent[id])
+                    queue.Enqueue(child.Id);
+            }
+            groups.Add(group);
         }
-        return result;
+
+        return groups.Count == 0 ? null : groups;
+    }
+
+    /// <summary>建立與改名時主動驗證名稱長度(SQLite 不強制 HasMaxLength,不能只靠資料庫)。</summary>
+    private static void ValidateNameLength(string normalized)
+    {
+        if (normalized.Length > Label.MaxNameLength)
+            throw new ArgumentException(
+                $"標籤名稱長度 {normalized.Length} 超過上限 {Label.MaxNameLength}:'{normalized[..16]}…'");
     }
 
     /// <summary>
@@ -279,6 +348,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                     continue;
                 }
 
+                ValidateNameLength(name);
                 label = new Label { Id = Guid.NewGuid(), Name = name, CreatedAt = DateTimeOffset.UtcNow };
                 _db.Set<Label>().Add(label);
                 try

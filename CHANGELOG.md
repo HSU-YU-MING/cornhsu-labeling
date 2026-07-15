@@ -1,6 +1,20 @@
 # Changelog
 
-## [Unreleased] — 0.1.0-preview.1
+## [Unreleased] — 0.1.0-preview.3
+
+### Added
+- `GetLabelsOfManyAsync(entities)`:批次讀取多個實體的標籤(一次查詢),解清單畫面 N+1。
+  回傳字典以傳入實體實例為鍵(參考相等),每個實體保證有項目。
+  benchmark:50 筆 SQLite 本機快 5 倍(省 49 次 roundtrip)。
+- 多標籤查詢 `FindByLabelsAsync` / `QueryByLabelsAsync<T>` + `LabelMatch`(Any=OR / All=AND):
+  - `All` 模式任一名稱不存在 → 結果必為空;`Any` 模式不存在的名稱被忽略。
+  - `includeDescendants` 下每個名稱代表「該標籤或其任一子孫」(群組語意)。
+- `samples/Benchmark`:效能量測 harness(5 型別 × 10k 筆),數據入 README「效能」節。
+- 參數驗證:`AttachAsync`/`DetachAsync`/`GetLabelsOfAsync` 的 null 實體改拋 `ArgumentNullException`;
+  `CreateAsync` 驗證 `parentId` 存在;建立/改名主動驗證名稱長度上限
+  `Label.MaxNameLength`(= 64,SQLite 不強制 `HasMaxLength`,不能只靠資料庫)。
+
+## [0.1.0-preview.2] — 2026-07-15
 
 ### Added
 - `Cornhsu.Labeling`(抽象層):`Label`、`ILabelable<TKey>`、`ILabelStore`、`LabelHit`。

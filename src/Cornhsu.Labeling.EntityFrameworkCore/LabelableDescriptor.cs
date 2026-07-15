@@ -37,12 +37,9 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
     }
 
     public async Task<IReadOnlyList<LabelHit>> QueryHitsAsync(
-        DbContext db, IReadOnlyCollection<Guid> labelIds, CancellationToken ct)
+        DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match, CancellationToken ct)
     {
-        var entities = await db.Set<LabelLink<TEntity, TKey>>()
-            .Where(l => labelIds.Contains(l.LabelId))
-            .Select(l => l.Entity)
-            .Distinct()
+        var entities = await BuildEntityQuery(db, labelIdGroups, match)
             .ToListAsync(ct).ConfigureAwait(false);
 
         return entities
@@ -97,11 +94,65 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
             .OrderBy(l => l.SortOrder).ThenBy(l => l.Name)
             .ToListAsync(ct).ConfigureAwait(false);
 
-    public IQueryable CreateQueryByLabels(DbContext db, IReadOnlyCollection<Guid> labelIds)
-        => db.Set<LabelLink<TEntity, TKey>>()
-            .Where(l => labelIds.Contains(l.LabelId))
-            .Select(l => l.Entity)
-            .Distinct();
+    public async Task<IReadOnlyDictionary<ILabelable, IReadOnlyList<Label>>> GetLabelsManyAsync(
+        DbContext db, IReadOnlyList<ILabelable> entities, CancellationToken ct)
+    {
+        var typed = entities.Cast<TEntity>().ToList();
+        var ids = typed.Select(e => e.Id).Distinct().ToList();
+
+        var pairs = await db.Set<LabelLink<TEntity, TKey>>()
+            .Where(l => ids.Contains(l.EntityId))
+            .Select(l => new { l.EntityId, l.Label })
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        var byId = pairs
+            .GroupBy(p => p.EntityId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<Label>)g.Select(p => p.Label)
+                    .OrderBy(l => l.SortOrder).ThenBy(l => l.Name, StringComparer.Ordinal)
+                    .ToList());
+
+        // 以實例(參考相等)為鍵:呼叫端傳什麼就用什麼當 key,每個實體都保證有項目
+        var result = new Dictionary<ILabelable, IReadOnlyList<Label>>(ReferenceEqualityComparer.Instance);
+        foreach (var e in typed)
+            result[e] = byId.TryGetValue(e.Id, out var labels) ? labels : Array.Empty<Label>();
+        return result;
+    }
+
+    public IQueryable CreateQueryByLabels(DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match)
+        => BuildEntityQuery(db, labelIdGroups, match);
+
+    /// <summary>
+    /// 組出「貼著指定標籤的實體」查詢。
+    /// Any(或只有一個群組):所有 Id 合併成一個 IN。
+    /// All:第一個群組為基底,其餘群組各以 IN 子查詢做交集
+    /// (benchmark 實測:子查詢比 GroupBy/HAVING 慢一些但語意能正確涵蓋子孫群組)。
+    /// </summary>
+    private IQueryable<TEntity> BuildEntityQuery(
+        DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> groups, LabelMatch match)
+    {
+        var links = db.Set<LabelLink<TEntity, TKey>>();
+
+        if (match == LabelMatch.Any || groups.Count == 1)
+        {
+            var ids = groups.SelectMany(g => g).Distinct().ToList();
+            return links
+                .Where(l => ids.Contains(l.LabelId))
+                .Select(l => l.Entity)
+                .Distinct();
+        }
+
+        var first = groups[0].ToList();
+        var q = links.Where(l => first.Contains(l.LabelId));
+        for (var i = 1; i < groups.Count; i++)
+        {
+            var ids = groups[i].ToList();
+            var sub = links.Where(l2 => ids.Contains(l2.LabelId)).Select(l2 => l2.EntityId);
+            q = q.Where(l => sub.Contains(l.EntityId));
+        }
+        return q.Select(l => l.Entity).Distinct();
+    }
 
     /// <summary>
     /// 手工組 <c>l.EntityId == id</c> 的運算式:泛型 TKey 無法直接用 ==,

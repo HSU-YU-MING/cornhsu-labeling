@@ -10,6 +10,9 @@
   - `All` 模式任一名稱不存在 → 結果必為空;`Any` 模式不存在的名稱被忽略。
   - `includeDescendants` 下每個名稱代表「該標籤或其任一子孫」(群組語意)。
 - `samples/Benchmark`:效能量測 harness(5 型別 × 10k 筆),數據入 README「效能」節。
+- `LabelStoreFactory.Create(context, registry)`:無 DI 容器應用程式(WPF/WinForms 的
+  singleton 服務架構)直接建立 `ILabelStore` 的正門——M4 真實遷移 QuillNest 時發現的缺口:
+  `EfLabelStore` 是 internal,先前唯一入口 `AddLabeling` 強制要求 DI。
 - 參數驗證:`AttachAsync`/`DetachAsync`/`GetLabelsOfAsync` 的 null 實體改拋 `ArgumentNullException`;
   `CreateAsync` 驗證 `parentId` 存在;建立/改名主動驗證名稱長度上限
   `Label.MaxNameLength`(= 64,SQLite 不強制 `HasMaxLength`,不能只靠資料庫)。

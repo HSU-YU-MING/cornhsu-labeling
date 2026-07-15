@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] — 2026-07-15
+
+> v1.0 前置清單全數完成的版本;讓消費端先跑一陣子,穩定後以同內容升 1.0.0。
 
 ### Added
 - **`Label.ConcurrencyStamp` 並發戳記**(v1.0 前最後的 schema 決定):每次透過 store 修改

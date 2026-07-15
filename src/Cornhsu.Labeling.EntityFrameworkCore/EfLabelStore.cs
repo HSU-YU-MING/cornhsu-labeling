@@ -63,6 +63,35 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
+    public async Task<Label> UpdateAsync(Guid labelId, Action<Label> update, CancellationToken ct = default)
+    {
+        if (update is null) throw new ArgumentNullException(nameof(update));
+
+        var label = await _db.Set<Label>().FindAsync(new object[] { labelId }, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"找不到標籤 {labelId}。");
+
+        var originalName = label.Name;
+        update(label);
+
+        if (label.Id != labelId)
+            throw new InvalidOperationException("不可在 UpdateAsync 中修改標籤的 Id。");
+
+        // 改名走與 RenameAsync 相同的規則(正規化 + 唯一性)
+        if (!string.Equals(label.Name, originalName, StringComparison.Ordinal))
+        {
+            var normalized = Normalize(label.Name)
+                ?? throw new ArgumentException("標籤名稱不可為空白。", nameof(update));
+            var taken = await _db.Set<Label>().AnyAsync(l => l.Name == normalized && l.Id != labelId, ct).ConfigureAwait(false);
+            if (taken)
+                throw new InvalidOperationException($"標籤名稱 '{normalized}' 已被使用。");
+            label.Name = normalized;
+        }
+
+        await EnsureNoCycleAsync(label, ct).ConfigureAwait(false);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return label;
+    }
+
     public async Task DeleteAsync(Guid labelId, CancellationToken ct = default)
     {
         var label = await _db.Set<Label>().FindAsync(new object[] { labelId }, ct).ConfigureAwait(false)
@@ -164,6 +193,32 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     private static List<string> NormalizeMany(IEnumerable<string> names)
         => names.Select(Normalize).Where(n => n is not null).Distinct().Select(n => n!).ToList();
 
+    /// <summary>變更父標籤時的循環檢查:沿新父標籤的祖先鏈往上走,不可繞回自己。</summary>
+    private async Task EnsureNoCycleAsync(Label label, CancellationToken ct)
+    {
+        if (label.ParentId is null) return;
+        if (label.ParentId == label.Id)
+            throw new InvalidOperationException($"標籤 '{label.Name}' 不可以是自己的父標籤。");
+
+        var all = await _db.Set<Label>().AsNoTracking()
+            .Select(l => new { l.Id, l.ParentId })
+            .ToListAsync(ct).ConfigureAwait(false);
+        var parentOf = all.ToDictionary(x => x.Id, x => x.ParentId);
+
+        var current = label.ParentId;
+        var hops = 0;
+        while (current is not null)
+        {
+            if (current == label.Id)
+                throw new InvalidOperationException(
+                    $"不可把標籤 '{label.Name}' 移到自己的子孫標籤底下(會形成循環)。");
+            if (!parentOf.TryGetValue(current.Value, out var next))
+                throw new InvalidOperationException($"父標籤 {current} 不存在。");
+            current = next;
+            if (++hops > parentOf.Count) break;   // 資料已異常成環時的防呆,交給上面的檢查擋
+        }
+    }
+
     /// <summary>找到標籤本身;若 includeDescendants 則走訪階層收集所有子孫標籤 Id。</summary>
     private async Task<List<Guid>> ResolveLabelIdsAsync(string labelName, bool includeDescendants, CancellationToken ct)
     {
@@ -221,9 +276,13 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                 }
                 catch (DbUpdateException)
                 {
-                    // 競態:另一條執行路徑剛建立了同名標籤 → 放棄本次新增,重讀既有那筆
+                    // 可能是同名競態(另一條執行路徑剛建立了同名標籤、撞上 unique index)。
+                    // 重讀驗證:真的有同名標籤 → 用既有那筆;沒有 → 不是競態,原例外照拋。
                     _db.Entry(label).State = EntityState.Detached;
-                    label = await _db.Set<Label>().FirstAsync(l => l.Name == name, ct).ConfigureAwait(false);
+                    var winner = await _db.Set<Label>()
+                        .FirstOrDefaultAsync(l => l.Name == name, ct).ConfigureAwait(false);
+                    if (winner is null) throw;
+                    label = winner;
                 }
             }
             result.Add(label);

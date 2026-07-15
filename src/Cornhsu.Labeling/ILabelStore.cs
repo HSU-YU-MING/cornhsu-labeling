@@ -27,6 +27,16 @@ public interface ILabelStore
     /// <param name="ct">取消權杖。</param>
     Task RenameAsync(Guid labelId, string newName, CancellationToken ct = default);
 
+    /// <summary>
+    /// 更新標籤欄位(顏色、排序、父標籤,也允許改名——改名規則與 <see cref="RenameAsync"/> 相同)。
+    /// 對 <paramref name="update"/> 內的 Label 所做的修改會被存檔;
+    /// 變更父標籤時會檢查不可形成循環。
+    /// </summary>
+    /// <param name="labelId">標籤 Id。</param>
+    /// <param name="update">修改動作,例如 <c>l =&gt; l.Color = "#FF5722"</c>。</param>
+    /// <param name="ct">取消權杖。</param>
+    Task<Label> UpdateAsync(Guid labelId, Action<Label> update, CancellationToken ct = default);
+
     /// <summary>刪除標籤。所有型別上的連結由 cascade delete 自動清除;有子標籤時拋出例外。</summary>
     /// <param name="labelId">標籤 Id。</param>
     /// <param name="ct">取消權杖。</param>

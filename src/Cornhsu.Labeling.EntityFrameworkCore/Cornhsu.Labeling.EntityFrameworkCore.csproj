@@ -7,7 +7,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Cornhsu.Labeling\Cornhsu.Labeling.csproj" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
+    <!-- 樓地板刻意用 8.0 系列中已修補已知弱點的版本(而非 8.0.0):
+         消費端仍可 unify 到 EF Core 9/10,但預設不會拖進帶弱點通報的舊傳遞相依。 -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.11" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
   </ItemGroup>
 </Project>

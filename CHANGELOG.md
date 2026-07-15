@@ -16,7 +16,12 @@
 - 函式庫內所有 await 使用 `ConfigureAwait(false)`(避免 WPF/WinForms 同步等待死鎖)。
 - 測試:SQLite in-memory,涵蓋外鍵完整性、多型查詢、階層、冪等、註冊驗證(規劃書 §9.2 全 14 條)。
 
+- `UpdateAsync(labelId, l => ...)`:更新顏色/排序/父標籤(含改名唯一性檢查與父子循環防護)。
+
 ### Changed
 - `ILabelableDescriptor` 公開介面縮減為純描述資訊(ClrType/KeyType/TypeKey);
   連結表操作管線改為 internal,不再是公開 API 承諾。
+- get-or-create 的競態處理改為「重讀驗證」:重讀不到同名標籤表示不是競態,原例外照拋。
+- 相依樓地板 8.0.0 → 8.0.11(EF Core)/ 8.0.2(DI.Abstractions):
+  預設不再拖進帶已知弱點通報的傳遞相依,消費端仍可 unify 至 EF Core 9/10。
 - `samples/MinimalConsole`:獨立的第二個消費者。

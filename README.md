@@ -1,8 +1,51 @@
 # Cornhsu.Labeling
 
+[![NuGet](https://img.shields.io/nuget/v/Cornhsu.Labeling.svg?label=Cornhsu.Labeling)](https://www.nuget.org/packages/Cornhsu.Labeling)
+[![NuGet](https://img.shields.io/nuget/v/Cornhsu.Labeling.EntityFrameworkCore.svg?label=Cornhsu.Labeling.EntityFrameworkCore)](https://www.nuget.org/packages/Cornhsu.Labeling.EntityFrameworkCore)
+[![Downloads](https://img.shields.io/nuget/dt/Cornhsu.Labeling.EntityFrameworkCore.svg)](https://www.nuget.org/packages/Cornhsu.Labeling.EntityFrameworkCore)
+[![CI](https://github.com/HSU-YU-MING/cornhsu-labeling/actions/workflows/ci.yml/badge.svg)](https://github.com/HSU-YU-MING/cornhsu-labeling/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 給 EF Core 的多型標籤系統。**同一個標籤,貼在任何型別上**——而且每條連結都有真外鍵。
 
-> ⏳ 尚未發佈至 NuGet(v0.1.0-preview.1 準備中)。
+測試涵蓋 SQLite / SQL Server / PostgreSQL × EF Core 8 / 9 / 10;
+已在真實產品([QuillNest](https://github.com/HSU-YU-MING))的正式資料上驗證。
+
+## 架構一覽
+
+```mermaid
+flowchart LR
+    subgraph app["你的應用程式"]
+        direction TB
+        note["Note : ILabelable&lt;int&gt;"]
+        memo["Memo : ILabelable&lt;Guid&gt;"]
+        reg["LabelRegistry<br/>r.Labelable&lt;T&gt;()<br/>主鍵型別自動推斷"]
+    end
+
+    subgraph pkg["Cornhsu.Labeling"]
+        direction TB
+        store["ILabelStore<br/>CRUD・貼/撕標・跨型別查詢<br/>批次讀寫・AND/OR・階層"]
+        analyzer["Roslyn Analyzer<br/>未註冊 → 編譯期警告"]
+    end
+
+    subgraph db["資料庫(SQLite / SQL Server / PostgreSQL)"]
+        direction TB
+        label[("Label<br/>名稱唯一・階層・並發戳記")]
+        link1[("LabelLink_Note<br/>真外鍵・cascade")]
+        link2[("LabelLink_Memo<br/>真外鍵・cascade")]
+    end
+
+    note -.->|"編譯期檢查"| analyzer
+    note --> reg
+    memo --> reg
+    reg -->|"ApplyLabelModel<br/>每型別自動生成連結表"| db
+    app -->|"貼標/查詢"| store
+    store --> label
+    store --> link1
+    store --> link2
+    label --- link1
+    label --- link2
+```
 
 ## 為什麼需要它
 

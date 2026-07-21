@@ -6,12 +6,12 @@
 [![CI](https://github.com/HSU-YU-MING/cornhsu-labeling/actions/workflows/ci.yml/badge.svg)](https://github.com/HSU-YU-MING/cornhsu-labeling/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**[作品介紹與開發故事](https://cornhsu.com/cornhsu-labeling.html) · [NuGet](https://www.nuget.org/packages/Cornhsu.Labeling.EntityFrameworkCore) · MIT**
+**[作品介紹與開發故事](https://cornhsu.com/cornhsu-labeling) · [NuGet](https://www.nuget.org/packages/Cornhsu.Labeling.EntityFrameworkCore) · MIT**
 
 給 EF Core 的多型標籤系統。**同一個標籤,貼在任何型別上**——而且每條連結都有真外鍵。
 
 測試涵蓋 SQLite / SQL Server / PostgreSQL × EF Core 8 / 9 / 10;
-已在真實產品([QuillNest](https://cornhsu.com/quillnest.html))的正式資料上驗證。
+已在真實產品([QuillNest](https://cornhsu.com/quillnest))的正式資料上驗證。
 
 ## 架構一覽
 

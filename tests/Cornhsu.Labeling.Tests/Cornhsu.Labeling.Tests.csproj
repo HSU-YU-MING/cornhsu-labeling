@@ -3,11 +3,17 @@
     <!-- EF 版本矩陣(CI 用):-p:CornhsuTestTfm=net10.0 -p:CornhsuEfVersion=10.0.*
          真的引用 EF 9/10 跑同一套測試,不是只換 SDK -->
     <CornhsuTestTfm Condition="'$(CornhsuTestTfm)' == ''">net8.0</CornhsuTestTfm>
-    <!-- ⚠ 8.0.11 是天花板,不要往上調。這個變數同時餵三個 provider,而兩家的 patch
-         節奏不同:Microsoft 的 EF 8 線走到 8.0.29,Npgsql 只到 8.0.11。推過 8.0.11,
-         Npgsql 解析不到對應版本 → NuGet 浮動到 9.0.0 → 把 EF Relational 9 拖進相依圖
-         → 撞上釘住的 8.x,NU1603 + NU1605 全紅(dependabot #10 實測)。
-         想解開就要把 Npgsql 拆成獨立變數 —— 那是有意識的改動,不是順手升版。 -->
+    <!-- ⚠ 這個值必須等於 src 的相依樓地板(EntityFrameworkCore.Relational 8.0.11)。
+         它的意義是「測我們對外承諾的最低版本」—— CI 矩陣另外用 9.0.* / 10.0.* 測更新的線。
+         讓它浮動到 8.0.29 會變成「承諾支援 8.0.11,卻從來沒測過 8.0.11」,是退步。
+
+         另外剛好有一道天花板重合在同一個數字上:這個變數同時餵三個 provider,而
+         Microsoft 的 EF 8 線走到 8.0.29、Npgsql 只到 8.0.11。推過 8.0.11 的話 Npgsql
+         解析不到對應版本 → NuGet 浮動到 9.0.0 → 把 EF Relational 9 拖進相依圖 →
+         撞上釘住的 8.x,NU1603 + NU1605 全紅(dependabot #10 實測)。
+
+         所以真正會咬人的時機是「哪天要抬高 src 樓地板」—— 那時要嘛 Npgsql 已有對應版本,
+         要嘛得把它拆成獨立變數。見 RELEASING.md。 -->
     <CornhsuEfVersion Condition="'$(CornhsuEfVersion)' == ''">8.0.11</CornhsuEfVersion>
     <CornhsuDiVersion Condition="'$(CornhsuDiVersion)' == ''">8.0.1</CornhsuDiVersion>
 

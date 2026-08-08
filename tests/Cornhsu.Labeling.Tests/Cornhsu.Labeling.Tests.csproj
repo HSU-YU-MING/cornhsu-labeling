@@ -3,7 +3,7 @@
     <!-- EF 版本矩陣(CI 用):-p:CornhsuTestTfm=net10.0 -p:CornhsuEfVersion=10.0.*
          真的引用 EF 9/10 跑同一套測試,不是只換 SDK -->
     <CornhsuTestTfm Condition="'$(CornhsuTestTfm)' == ''">net8.0</CornhsuTestTfm>
-    <CornhsuEfVersion Condition="'$(CornhsuEfVersion)' == ''">8.0.11</CornhsuEfVersion>
+    <CornhsuEfVersion Condition="'$(CornhsuEfVersion)' == ''">9.0.4</CornhsuEfVersion>
     <CornhsuDiVersion Condition="'$(CornhsuDiVersion)' == ''">8.0.1</CornhsuDiVersion>
 
     <TargetFramework>$(CornhsuTestTfm)</TargetFramework>

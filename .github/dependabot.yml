@@ -1,0 +1,22 @@
+version: 2
+
+# 為什麼需要:這個 repo 的相依刻意釘在「8.0 系列中已修補已知弱點的版本」
+# (EF Core Relational 8.0.11、DI.Abstractions 8.0.2),而不是最低的 8.0.0。
+# 那個判斷有保存期限 —— dependabot 讓「這條線又出了新的修補版」變成一則 PR。
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      microsoft:
+        patterns: ["Microsoft.*", "System.*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

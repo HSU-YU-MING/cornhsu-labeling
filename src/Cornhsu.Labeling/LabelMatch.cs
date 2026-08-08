@@ -1,11 +1,11 @@
 namespace Cornhsu.Labeling;
 
-/// <summary>多標籤查詢的匹配模式。</summary>
+/// <summary>Match mode for multi-label queries.</summary>
 public enum LabelMatch
 {
-    /// <summary>符合任一標籤即命中(OR)。不存在的標籤名稱不影響其他標籤的結果。</summary>
+    /// <summary>Matches when any of the labels is present (OR). Names that do not exist do not affect the other labels' results.</summary>
     Any = 0,
 
-    /// <summary>必須同時符合所有標籤才命中(AND)。任一標籤名稱不存在時,結果必為空。</summary>
+    /// <summary>Matches only when all of the labels are present (AND). If any name does not exist, the result is necessarily empty.</summary>
     All = 1,
 }

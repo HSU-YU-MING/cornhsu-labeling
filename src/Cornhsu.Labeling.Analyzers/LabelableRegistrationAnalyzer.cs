@@ -20,24 +20,31 @@ public sealed class LabelableRegistrationAnalyzer : DiagnosticAnalyzer
     private const string GenericTypeName = "Cornhsu.Labeling.ILabelable`1";
     private const string RegistryTypeName = "Cornhsu.Labeling.EntityFrameworkCore.LabelRegistry";
 
+    private const string HelpUriBase =
+        "https://github.com/HSU-YU-MING/cornhsu-labeling/blob/main/docs/analyzer-rules.md#";
+
     public static readonly DiagnosticDescriptor NotRegistered = new(
         id: "CHSU001",
-        title: "ILabelable 型別未註冊",
-        messageFormat: "型別 '{0}' 實作了 ILabelable<{1}>,但此編譯單元中沒有 r.Labelable<{0}>() 的註冊;" +
-                       "執行期貼標/查詢會拋出「型別未註冊」。若註冊發生在其他組件,可對此警告靜音。",
+        title: "Labelable type is not registered",
+        messageFormat: "Type '{0}' implements ILabelable<{1}>, but this compilation contains no " +
+                       "r.Labelable<{0}>() registration; attaching or querying it at run time will throw " +
+                       "\"type is not registered\". Suppress this warning if the registration lives in another assembly.",
         category: "Cornhsu.Labeling",
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
+        helpLinkUri: HelpUriBase + "chsu001",
         customTags: WellKnownDiagnosticTags.CompilationEnd);
 
     public static readonly DiagnosticDescriptor MarkerOnly = new(
         id: "CHSU002",
-        title: "只實作了非泛型的 ILabelable marker",
-        messageFormat: "型別 '{0}' 只實作了非泛型的 ILabelable;註冊時會因無法推斷主鍵型別而拋出例外。" +
-                       "請改實作 ILabelable<TKey>(例如 ILabelable<int> 或 ILabelable<Guid>)。",
+        title: "Only the non-generic ILabelable marker is implemented",
+        messageFormat: "Type '{0}' implements only the non-generic ILabelable; registering it will throw " +
+                       "because the key type cannot be inferred. Implement ILabelable<TKey> instead " +
+                       "(for example ILabelable<int> or ILabelable<Guid>).",
         category: "Cornhsu.Labeling",
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
+        helpLinkUri: HelpUriBase + "chsu002",
         customTags: WellKnownDiagnosticTags.CompilationEnd);
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>

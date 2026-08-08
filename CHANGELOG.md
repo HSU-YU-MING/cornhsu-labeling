@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.1.0] — 2026-08-07
+
+**對外語言統一為英文。** 公開 API 的簽名、行為、資料庫 schema 全部不變 —— 這一版只換
+「使用者讀到的字」。升 minor 而非 patch:例外訊息與 analyzer 診斷文字是有人在斷言、
+在 grep 的東西,換語言對他們是破壞性的。
+
+### Changed
+- **公開 API 的 XML 文件註解全面英文化。** 本套件開了 `GenerateDocumentationFile`,
+  那些 `///` 註解會打包成 .xml 隨 nupkg 出貨 —— 也就是說,非中文使用者在 Visual Studio
+  裡把游標移到 `AttachAsync` 上,跳出來的 IntelliSense 提示是中文。範圍涵蓋
+  `ILabelStore`、`ILabelable`、`Label`、`LabelHit`、`LabelMatch`、`LabelRegistry`、
+  `LabelLink`、`LabelStoreFactory`、`ILabelableDescriptor` 與兩個擴充方法類別。
+  (`EfLabelStore` / `LabelableDescriptor` 是 internal,其註解本來就不出貨,維持中文。)
+- **例外訊息英文化**(18 處):標籤名稱驗證、重複名稱、找不到標籤、階層循環、
+  未註冊型別、`AutoCreateLabels` 停用時的提示等。這些會進消費端的錯誤日誌。
+- **Analyzer 診斷文字英文化**:`CHSU001` / `CHSU002` 的 title 與 message ——
+  它們顯示在 Visual Studio 的 Error List 裡。規則 ID、分類與嚴重度不變。
+- **NuGet 套件 description 英文化**(兩個套件),它是 nuget.org 搜尋結果上的那行摘要。
+- 程式碼內部註解維持中文,不在本次範圍。
+
+- **README 改為英文為主、中文並存**(`README.md` / `README.zh-Hant.md`,互相連結)。
+  `README.md` 會被打包進兩個 nupkg —— 也就是說 nuget.org 上這兩個套件的說明頁原本
+  只有中文。與 PolyMigrate / XamlContrast 的雙語形狀對齊。
+
+### Added
+- **`CHSU001` / `CHSU002` 補上 `helpLinkUri`**,Visual Studio 的「深入了解」連結不再是死的;
+  對應的說明文件 [`docs/analyzer-rules.md`](docs/analyzer-rules.md) 一併補上
+  (每條規則附觸發範例、修法、以及該不該壓掉)。
+- `.github/dependabot.yml`(nuget + github-actions)。對這個 repo 特別有意義:相依刻意釘在
+  「8.0 系列中已修補已知弱點的版本」(EF Core Relational 8.0.11、DI.Abstractions 8.0.2)
+  而非最低的 8.0.0,那個判斷有保存期限。
+
+### Fixed
+- CI 的 actions 版本升級(`checkout@v4` → `v7`、`setup-dotnet@v4` → `v6`),脫離 Node 20 淘汰線 ——
+  另外三個姊妹套件早已升過,只有這裡留在舊版。
+
+## [1.0.1] — 2026-07-21
+
+### Changed
+- README 加上作品集回連,QuillNest 連結改指向作品頁(原本指向 GitHub 個人頁)。
+  純文件版,程式碼未變。
+
 ## [1.0.0] — 2026-07-15
 
 > 正式版:API 從此穩定。規畫書 M1–M5 全數完成——

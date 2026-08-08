@@ -92,6 +92,6 @@ public class BatchReadTests
     {
         using var db = new TestDb();
         var act = () => db.Store.GetLabelsOfManyAsync(new[] { new TestOrphan { Id = Guid.NewGuid() } });
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*未註冊*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*is not registered*");
     }
 }

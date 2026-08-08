@@ -84,7 +84,7 @@ public class IntegrityTests
 
         var act = () => db.Store.DeleteAsync(parent.Id);
         await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*子標籤*");
+            .WithMessage("*still has children*");
 
         (await db.Store.FindAsync("論文")).Should().NotBeNull("父標籤不應被刪掉");
     }

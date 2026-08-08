@@ -37,7 +37,7 @@ public class ValidationTests
         using var db = new TestDb();
 
         var act = () => db.Store.CreateAsync("孤兒", parentId: Guid.NewGuid());
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*父標籤*不存在*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*parent label*does not exist*");
     }
 
     [Fact]

@@ -1,150 +1,152 @@
 namespace Cornhsu.Labeling;
 
-/// <summary>標籤系統的統一入口:標籤 CRUD、貼標/撕標、跨型別與強型別查詢。</summary>
+/// <summary>The single entry point to the labeling system: label CRUD, attach/detach, and cross-type or strongly typed queries.</summary>
 public interface ILabelStore
 {
     // ---- 標籤 CRUD ----
 
-    /// <summary>建立新標籤。名稱已存在時拋出 <see cref="InvalidOperationException"/>。</summary>
-    /// <param name="name">顯示名稱,全域唯一(自動去除前後空白)。</param>
-    /// <param name="color">顏色,建議 #RRGGBB。</param>
-    /// <param name="icon">圖示(emoji / 圖示名稱 / 短碼,純視覺)。</param>
-    /// <param name="parentId">父標籤 Id;null 表示頂層。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Creates a new label. Throws <see cref="InvalidOperationException"/> if the name already exists.</summary>
+    /// <param name="name">Display name; globally unique (surrounding whitespace is trimmed).</param>
+    /// <param name="color">Color, preferably as #RRGGBB.</param>
+    /// <param name="icon">Icon (emoji, icon name or short code) — purely visual.</param>
+    /// <param name="parentId">Parent label id; null means top level.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<Label> CreateAsync(string name, string? color = null, string? icon = null, Guid? parentId = null, CancellationToken ct = default);
 
-    /// <summary>依名稱尋找標籤;找不到回傳 null。</summary>
-    /// <param name="name">標籤名稱。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Finds a label by name; returns null when there is no match.</summary>
+    /// <param name="name">Label name.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<Label?> FindAsync(string name, CancellationToken ct = default);
 
-    /// <summary>取得所有標籤(依 SortOrder、Name 排序)。</summary>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Returns every label, ordered by SortOrder then Name.</summary>
+    /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<Label>> GetAllAsync(CancellationToken ct = default);
 
-    /// <summary>重新命名標籤。因為連結存的是 Id,所有連結不受影響。</summary>
-    /// <param name="labelId">標籤 Id。</param>
-    /// <param name="newName">新名稱。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Renames a label. Links store the label id, so no link is affected.</summary>
+    /// <param name="labelId">Label id.</param>
+    /// <param name="newName">New name.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task RenameAsync(Guid labelId, string newName, CancellationToken ct = default);
 
     /// <summary>
-    /// 更新標籤欄位(顏色、排序、父標籤,也允許改名——改名規則與 <see cref="RenameAsync"/> 相同)。
-    /// 對 <paramref name="update"/> 內的 Label 所做的修改會被存檔;
-    /// 變更父標籤時會檢查不可形成循環。
+    /// Updates a label's fields (color, sort order, parent — and the name too, following the same
+    /// rules as <see cref="RenameAsync"/>). Changes made to the Label inside <paramref name="update"/>
+    /// are persisted; changing the parent is checked for cycles.
     /// </summary>
-    /// <param name="labelId">標籤 Id。</param>
-    /// <param name="update">修改動作,例如 <c>l =&gt; l.Color = "#FF5722"</c>。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <param name="labelId">Label id.</param>
+    /// <param name="update">The mutation to apply, e.g. <c>l =&gt; l.Color = "#FF5722"</c>.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<Label> UpdateAsync(Guid labelId, Action<Label> update, CancellationToken ct = default);
 
-    /// <summary>刪除標籤。所有型別上的連結由 cascade delete 自動清除;有子標籤時拋出例外。</summary>
-    /// <param name="labelId">標籤 Id。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Deletes a label. Links on every type are removed by cascade delete; throws if the label has children.</summary>
+    /// <param name="labelId">Label id.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task DeleteAsync(Guid labelId, CancellationToken ct = default);
 
     // ---- 貼標 / 撕標 ----
 
-    /// <summary>把標籤貼到實體上。標籤不存在會自動建立(get-or-create);重複貼標為冪等操作。
-    /// 名稱會自動去除前後空白。</summary>
-    /// <typeparam name="T">已註冊的可標記型別(實作 <see cref="ILabelable{TKey}"/>)。</typeparam>
-    /// <param name="entity">目標實體(必須已存在於資料庫)。</param>
-    /// <param name="labelNames">標籤名稱,可多個。</param>
+    /// <summary>Attaches labels to an entity. Missing labels are created automatically (get-or-create);
+    /// attaching the same label twice is idempotent. Surrounding whitespace in names is trimmed.</summary>
+    /// <typeparam name="T">A registered labelable type (one implementing <see cref="ILabelable{TKey}"/>).</typeparam>
+    /// <param name="entity">Target entity (must already exist in the database).</param>
+    /// <param name="labelNames">One or more label names.</param>
     Task AttachAsync<T>(T entity, params string[] labelNames) where T : class, ILabelable;
 
-    /// <summary>同 <see cref="AttachAsync{T}(T, string[])"/>,可傳入取消權杖。</summary>
-    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
-    /// <param name="entity">目標實體(必須已存在於資料庫)。</param>
-    /// <param name="labelNames">標籤名稱集合。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Same as <see cref="AttachAsync{T}(T, string[])"/>, but accepts a cancellation token.</summary>
+    /// <typeparam name="T">A registered labelable type.</typeparam>
+    /// <param name="entity">Target entity (must already exist in the database).</param>
+    /// <param name="labelNames">Label names.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task AttachAsync<T>(T entity, IEnumerable<string> labelNames, CancellationToken ct = default) where T : class, ILabelable;
 
     /// <summary>
-    /// 批次貼標:把同一組標籤貼到多個實體上(清單多選後「全部加上急件」的場景)。
-    /// 標籤只解析一次、既有連結一次查詢、單次 SaveChanges;冪等,已貼過的組合自動略過。
-    /// 標籤不存在時的行為與 <see cref="AttachAsync{T}(T, string[])"/> 相同(依 AutoCreateLabels)。
+    /// Bulk attach: applies the same set of labels to many entities (the "select several rows, tag them all
+    /// as urgent" case). Labels are resolved once, existing links are read in one query, and everything is
+    /// saved in a single SaveChanges. Idempotent — combinations that already exist are skipped.
+    /// Behaviour for labels that do not exist matches <see cref="AttachAsync{T}(T, string[])"/> (governed by AutoCreateLabels).
     /// </summary>
-    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
-    /// <param name="entities">目標實體集合(都必須已存在於資料庫);空集合直接返回。</param>
-    /// <param name="labelNames">標籤名稱集合;空集合直接返回。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <typeparam name="T">A registered labelable type.</typeparam>
+    /// <param name="entities">Target entities (all must already exist in the database); an empty sequence returns immediately.</param>
+    /// <param name="labelNames">Label names; an empty sequence returns immediately.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task AttachManyAsync<T>(IEnumerable<T> entities, IEnumerable<string> labelNames, CancellationToken ct = default)
         where T : class, ILabelable;
 
-    /// <summary>把標籤從實體上撕下。不存在的標籤或未貼上的標籤會被忽略。</summary>
-    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
-    /// <param name="entity">目標實體。</param>
-    /// <param name="labelNames">標籤名稱,可多個。</param>
+    /// <summary>Detaches labels from an entity. Labels that do not exist, or are not attached, are ignored.</summary>
+    /// <typeparam name="T">A registered labelable type.</typeparam>
+    /// <param name="entity">Target entity.</param>
+    /// <param name="labelNames">One or more label names.</param>
     Task DetachAsync<T>(T entity, params string[] labelNames) where T : class, ILabelable;
 
-    /// <summary>同 <see cref="DetachAsync{T}(T, string[])"/>,可傳入取消權杖。</summary>
-    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
-    /// <param name="entity">目標實體。</param>
-    /// <param name="labelNames">標籤名稱集合。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Same as <see cref="DetachAsync{T}(T, string[])"/>, but accepts a cancellation token.</summary>
+    /// <typeparam name="T">A registered labelable type.</typeparam>
+    /// <param name="entity">Target entity.</param>
+    /// <param name="labelNames">Label names.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task DetachAsync<T>(T entity, IEnumerable<string> labelNames, CancellationToken ct = default) where T : class, ILabelable;
 
-    /// <summary>取得實體目前貼著的所有標籤。</summary>
-    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
-    /// <param name="entity">目標實體。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Returns every label currently attached to the entity.</summary>
+    /// <typeparam name="T">A registered labelable type.</typeparam>
+    /// <param name="entity">Target entity.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<Label>> GetLabelsOfAsync<T>(T entity, CancellationToken ct = default) where T : class, ILabelable;
 
     /// <summary>
-    /// 批次取得多個實體各自的標籤(一次查詢),解掉清單畫面逐筆呼叫
-    /// <see cref="GetLabelsOfAsync{T}"/> 的 N+1 問題。
-    /// 回傳字典以傳入的實體「實例」為鍵(參考相等),每個實體都保證有對應項目,
-    /// 沒有標籤時為空清單。
+    /// Reads the labels of many entities in a single query, which is how a list view avoids the N+1
+    /// problem of calling <see cref="GetLabelsOfAsync{T}"/> per row.
+    /// The returned dictionary is keyed by the entity *instances* passed in (reference equality);
+    /// every entity is guaranteed to have an entry, empty when it has no labels.
     /// </summary>
-    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
-    /// <param name="entities">目標實體集合;空集合回傳空字典。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <typeparam name="T">A registered labelable type.</typeparam>
+    /// <param name="entities">Target entities; an empty sequence returns an empty dictionary.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyDictionary<T, IReadOnlyList<Label>>> GetLabelsOfManyAsync<T>(
         IEnumerable<T> entities, CancellationToken ct = default) where T : class, ILabelable;
 
     // ---- 查詢 ----
 
-    /// <summary>跨型別查詢:回傳所有貼著指定標籤的實體(以 <see cref="LabelHit"/> 表示)。</summary>
-    /// <param name="labelName">標籤名稱。</param>
-    /// <param name="includeDescendants">是否包含子孫標籤命中的實體。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Cross-type query: returns every entity carrying the given label, as <see cref="LabelHit"/> values.</summary>
+    /// <param name="labelName">Label name.</param>
+    /// <param name="includeDescendants">Whether entities matched via descendant labels are included.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<LabelHit>> FindByLabelAsync(string labelName, bool includeDescendants = true, CancellationToken ct = default);
 
-    /// <summary>單型別強型別查詢:回傳可續接 Where/OrderBy/Skip 的 <see cref="IQueryable{T}"/>。</summary>
-    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
-    /// <param name="labelName">標籤名稱。</param>
-    /// <param name="includeDescendants">是否包含子孫標籤命中的實體。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Single-type, strongly typed query: returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.</summary>
+    /// <typeparam name="T">A registered labelable type.</typeparam>
+    /// <param name="labelName">Label name.</param>
+    /// <param name="includeDescendants">Whether entities matched via descendant labels are included.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<IQueryable<T>> QueryByLabelAsync<T>(string labelName, bool includeDescendants = true, CancellationToken ct = default) where T : class, ILabelable;
 
     /// <summary>
-    /// 多標籤跨型別查詢:「同時標了論文+急件」(<see cref="LabelMatch.All"/>)或
-    /// 「標了論文或急件任一」(<see cref="LabelMatch.Any"/>)。
-    /// <paramref name="includeDescendants"/> 為 true 時,每個名稱代表「該標籤或其任一子孫」。
-    /// 空集合回傳空結果;<see cref="LabelMatch.All"/> 模式下任一名稱不存在時結果必為空。
+    /// Multi-label cross-type query: "tagged both paper and urgent" (<see cref="LabelMatch.All"/>) or
+    /// "tagged either paper or urgent" (<see cref="LabelMatch.Any"/>).
+    /// When <paramref name="includeDescendants"/> is true, each name means "that label or any of its descendants".
+    /// An empty sequence returns an empty result; under <see cref="LabelMatch.All"/>, a single missing name
+    /// necessarily makes the result empty.
     /// </summary>
-    /// <param name="labelNames">標籤名稱集合。</param>
-    /// <param name="match">匹配模式(AND / OR),預設 <see cref="LabelMatch.Any"/>。</param>
-    /// <param name="includeDescendants">是否包含子孫標籤命中的實體。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <param name="labelNames">Label names.</param>
+    /// <param name="match">Match mode (AND / OR); defaults to <see cref="LabelMatch.Any"/>.</param>
+    /// <param name="includeDescendants">Whether entities matched via descendant labels are included.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<LabelHit>> FindByLabelsAsync(
         IEnumerable<string> labelNames, LabelMatch match = LabelMatch.Any,
         bool includeDescendants = true, CancellationToken ct = default);
 
     /// <summary>
-    /// 多標籤單型別強型別查詢,語意同 <see cref="FindByLabelsAsync"/>;
-    /// 回傳可續接 Where/OrderBy/Skip 的 <see cref="IQueryable{T}"/>。
+    /// Multi-label single-type strongly typed query with the same semantics as <see cref="FindByLabelsAsync"/>;
+    /// returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.
     /// </summary>
-    /// <typeparam name="T">已註冊的可標記型別。</typeparam>
-    /// <param name="labelNames">標籤名稱集合。</param>
-    /// <param name="match">匹配模式(AND / OR),預設 <see cref="LabelMatch.Any"/>。</param>
-    /// <param name="includeDescendants">是否包含子孫標籤命中的實體。</param>
-    /// <param name="ct">取消權杖。</param>
+    /// <typeparam name="T">A registered labelable type.</typeparam>
+    /// <param name="labelNames">Label names.</param>
+    /// <param name="match">Match mode (AND / OR); defaults to <see cref="LabelMatch.Any"/>.</param>
+    /// <param name="includeDescendants">Whether entities matched via descendant labels are included.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<IQueryable<T>> QueryByLabelsAsync<T>(
         IEnumerable<string> labelNames, LabelMatch match = LabelMatch.Any,
         bool includeDescendants = true, CancellationToken ct = default) where T : class, ILabelable;
 
-    /// <summary>統計每個標籤的使用次數(跨所有已註冊型別加總),供 tag cloud 等視覺化使用。</summary>
-    /// <param name="ct">取消權杖。</param>
+    /// <summary>Counts how often each label is used, summed across every registered type — for tag clouds and similar visualizations.</summary>
+    /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyDictionary<Guid, int>> GetUsageCountsAsync(CancellationToken ct = default);
 }

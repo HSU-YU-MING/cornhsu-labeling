@@ -74,7 +74,7 @@ public class AttachManyTests
         var a = await db.AddNoteAsync();
 
         var act = () => db.Store.AttachManyAsync(new[] { a }, new[] { "論文", "不存在" });
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*不存在*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*do not exist*");
 
         (await db.Store.GetLabelsOfAsync(a)).Should().BeEmpty("整批失敗,不能貼一半");
     }

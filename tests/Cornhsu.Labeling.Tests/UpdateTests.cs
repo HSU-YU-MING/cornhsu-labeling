@@ -53,7 +53,7 @@ public class UpdateTests
         var label = await db.Store.CreateAsync("論文");
 
         var act = () => db.Store.UpdateAsync(label.Id, l => l.Name = "研究");
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*已被使用*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*already taken*");
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public class UpdateTests
         var label = await db.Store.CreateAsync("論文");
 
         var act = () => db.Store.UpdateAsync(label.Id, l => l.ParentId = label.Id);
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*自己的父標籤*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*its own parent*");
     }
 
     [Fact]
@@ -75,7 +75,7 @@ public class UpdateTests
         var grandchild = await db.Store.CreateAsync("摘要筆記", parentId: child.Id);
 
         var act = () => db.Store.UpdateAsync(root.Id, l => l.ParentId = grandchild.Id);
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*循環*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*cycle*");
     }
 
     [Fact]

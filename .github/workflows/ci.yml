@@ -8,8 +8,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
       - run: dotnet restore
@@ -36,8 +36,8 @@ jobs:
               8.0.x
               10.0.x
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ matrix.sdk }}
       - run: >
@@ -59,8 +59,8 @@ jobs:
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
       - run: dotnet test tests/Cornhsu.Labeling.Tests -c Release
@@ -82,8 +82,8 @@ jobs:
           --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Cornhsu-CI-P4ss!' -Q 'SELECT 1' || exit 1"
           --health-interval 10s --health-timeout 5s --health-retries 10 --health-start-period 20s
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
       - run: dotnet test tests/Cornhsu.Labeling.Tests -c Release

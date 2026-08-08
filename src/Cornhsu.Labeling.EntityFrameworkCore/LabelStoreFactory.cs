@@ -4,26 +4,26 @@ using Microsoft.Extensions.Logging;
 namespace Cornhsu.Labeling.EntityFrameworkCore;
 
 /// <summary>
-/// 給「沒有 DI 容器」的應用程式(WPF/WinForms 常見的 singleton 服務架構)直接建立
-/// <see cref="ILabelStore"/> 的正門。有 DI 容器時請優先使用
-/// <see cref="ServiceCollectionExtensions.AddLabeling{TContext}"/>。
+/// The front door for applications with no DI container (the singleton-service shape common in
+/// WPF/WinForms) to construct an <see cref="ILabelStore"/> directly. When you do have a container,
+/// prefer <see cref="ServiceCollectionExtensions.AddLabeling{TContext}"/>.
 /// </summary>
 public static class LabelStoreFactory
 {
     /// <summary>
-    /// 以指定的 DbContext 與 registry 建立 <see cref="ILabelStore"/>。
-    /// 回傳的 store 不擁有 context——生命週期與釋放由呼叫端的 context 決定。
+    /// Creates an <see cref="ILabelStore"/> over the given DbContext and registry.
+    /// The returned store does not own the context — its lifetime and disposal stay with the caller.
     /// </summary>
-    /// <typeparam name="TContext">應用程式的 DbContext 型別。</typeparam>
+    /// <typeparam name="TContext">Your application's DbContext type.</typeparam>
     /// <param name="context">
-    /// 後端 DbContext;其 OnModelCreating 必須以同一個 <paramref name="registry"/>
-    /// 呼叫 ApplyLabelModel。
+    /// The backing DbContext; its OnModelCreating must have called ApplyLabelModel with this same
+    /// <paramref name="registry"/>.
     /// </param>
     /// <param name="registry">
-    /// 可標記型別的註冊表。必須與建立 model 用的是**同一個實例**,
-    /// 且全 App 只能有一份(EF 的 model cache 以 DbContext 型別為 key)。
+    /// The registry of labelable types. It must be the **same instance** used to build the model,
+    /// and there must be exactly one per application (EF's model cache is keyed by DbContext type).
     /// </param>
-    /// <param name="logger">可選的 logger;null 表示不記錄(NullLogger)。</param>
+    /// <param name="logger">Optional logger; null means no logging (NullLogger).</param>
     public static ILabelStore Create<TContext>(TContext context, LabelRegistry registry,
         ILogger<ILabelStore>? logger = null)
         where TContext : DbContext

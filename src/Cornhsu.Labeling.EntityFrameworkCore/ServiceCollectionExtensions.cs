@@ -3,16 +3,16 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Cornhsu.Labeling.EntityFrameworkCore;
 
-/// <summary>把標籤系統掛進 DI 容器的擴充方法。</summary>
+/// <summary>Extension methods that wire the labeling system into a DI container.</summary>
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// 註冊標籤系統:建立並封存 <see cref="LabelRegistry"/>(Singleton),
-    /// 並以 <typeparamref name="TContext"/> 為後端註冊 <see cref="ILabelStore"/>(Scoped)。
+    /// Registers the labeling system: builds and seals a <see cref="LabelRegistry"/> (Singleton),
+    /// and registers <see cref="ILabelStore"/> (Scoped) backed by <typeparamref name="TContext"/>.
     /// </summary>
-    /// <typeparam name="TContext">應用程式的 DbContext。</typeparam>
-    /// <param name="services">DI 服務集合。</param>
-    /// <param name="configure">註冊可標記型別的設定動作。</param>
+    /// <typeparam name="TContext">Your application's DbContext.</typeparam>
+    /// <param name="services">The DI service collection.</param>
+    /// <param name="configure">Callback that registers the labelable types.</param>
     public static IServiceCollection AddLabeling<TContext>(
         this IServiceCollection services,
         Action<LabelRegistry> configure)

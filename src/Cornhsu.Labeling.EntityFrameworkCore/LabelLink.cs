@@ -1,28 +1,28 @@
 namespace Cornhsu.Labeling.EntityFrameworkCore;
 
 /// <summary>
-/// 「標籤貼在實體上」的連結紀錄。
-/// EF Core 把每個封閉泛型(如 <c>LabelLink&lt;Note, int&gt;</c>)視為獨立實體,
-/// 各自對應一張具備真外鍵的 join table——這就是把「每型別一張表」自動化的鑰匙。
+/// The record of "this label is attached to this entity".
+/// EF Core treats each closed generic (e.g. <c>LabelLink&lt;Note, int&gt;</c>) as a distinct entity type,
+/// each mapping to its own join table with real foreign keys — which is what automates "one table per type".
 /// </summary>
-/// <typeparam name="TEntity">可標記的實體型別。</typeparam>
-/// <typeparam name="TKey">實體的主鍵型別。</typeparam>
+/// <typeparam name="TEntity">The labelable entity type.</typeparam>
+/// <typeparam name="TKey">The entity's primary key type.</typeparam>
 public class LabelLink<TEntity, TKey>
     where TEntity : class, ILabelable<TKey>
     where TKey : notnull
 {
-    /// <summary>標籤 Id(外鍵 → Label.Id)。</summary>
+    /// <summary>Label id (foreign key → Label.Id).</summary>
     public Guid LabelId { get; set; }
 
-    /// <summary>標籤導覽屬性。</summary>
+    /// <summary>Label navigation property.</summary>
     public Label Label { get; set; } = default!;
 
-    /// <summary>實體 Id(外鍵 → TEntity.Id)。</summary>
+    /// <summary>Entity id (foreign key → TEntity.Id).</summary>
     public TKey EntityId { get; set; } = default!;
 
-    /// <summary>實體導覽屬性。</summary>
+    /// <summary>Entity navigation property.</summary>
     public TEntity Entity { get; set; } = default!;
 
-    /// <summary>貼標時間(UTC)。</summary>
+    /// <summary>When the label was attached (UTC).</summary>
     public DateTimeOffset AttachedAt { get; set; }
 }

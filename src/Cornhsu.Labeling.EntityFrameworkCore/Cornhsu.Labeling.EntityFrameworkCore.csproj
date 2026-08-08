@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <PackageId>Cornhsu.Labeling.EntityFrameworkCore</PackageId>
-    <Description>Cornhsu.Labeling 的 EF Core 實作。為每個可標記型別自動產生具備完整外鍵的 join table,支援跨型別標籤查詢。</Description>
+    <Description>The EF Core implementation of Cornhsu.Labeling. Generates a fully foreign-keyed join table per labelable type and supports querying labels across types.</Description>
   </PropertyGroup>
 
   <ItemGroup>

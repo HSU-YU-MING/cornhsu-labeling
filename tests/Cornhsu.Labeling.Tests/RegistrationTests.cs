@@ -17,7 +17,7 @@ public class RegistrationTests
         var act = () => db.Store.AttachAsync(orphan, "論文");
 
         (await act.Should().ThrowAsync<InvalidOperationException>())
-            .WithMessage("*TestOrphan*未註冊*Labelable<TestOrphan>*");
+            .WithMessage("*TestOrphan*is not registered*Labelable<TestOrphan>*");
     }
 
     [Fact] // #12
@@ -28,7 +28,7 @@ public class RegistrationTests
 
         var act = () => registry.Labelable<TestTodo>(typeKey: "TestNote");
 
-        act.Should().Throw<InvalidOperationException>().WithMessage("*TestNote*已被註冊*");
+        act.Should().Throw<InvalidOperationException>().WithMessage("*TestNote*already registered*");
     }
 
     [Fact]
@@ -38,7 +38,7 @@ public class RegistrationTests
 
         var act = () => db.Registry.Labelable<TestOrphan>();
 
-        act.Should().Throw<InvalidOperationException>().WithMessage("*已封存*");
+        act.Should().Throw<InvalidOperationException>().WithMessage("*sealed*");
     }
 
     [Fact] // #13

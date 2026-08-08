@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
     <PackageId>Cornhsu.Labeling</PackageId>
-    <Description>多型標籤(polymorphic labeling)的核心抽象:Label、ILabelable、ILabelStore。EF Core 實作請安裝 Cornhsu.Labeling.EntityFrameworkCore。</Description>
+    <Description>Core abstractions for polymorphic labeling: Label, ILabelable and ILabelStore. For the EF Core implementation, install Cornhsu.Labeling.EntityFrameworkCore.</Description>
   </PropertyGroup>
 
   <!-- netstandard2.0 沒有 nullable / init 等語法支援,補墊片 -->

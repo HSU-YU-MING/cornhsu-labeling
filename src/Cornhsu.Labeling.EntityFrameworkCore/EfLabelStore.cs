@@ -18,16 +18,16 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     public async Task<Label> CreateAsync(string name, string? color = null, string? icon = null, Guid? parentId = null, CancellationToken ct = default)
     {
         var normalized = Normalize(name)
-            ?? throw new ArgumentException("標籤名稱不可為空白。", nameof(name));
+            ?? throw new ArgumentException("label name must not be blank.", nameof(name));
         ValidateNameLength(normalized);
 
         var existing = await _db.Set<Label>().FirstOrDefaultAsync(l => l.Name == normalized, ct).ConfigureAwait(false);
         if (existing is not null)
-            throw new InvalidOperationException($"標籤 '{normalized}' 已存在(Id: {existing.Id})。");
+            throw new InvalidOperationException($"label '{normalized}' already exists (Id: {existing.Id}).");
 
         if (parentId is not null
             && !await _db.Set<Label>().AnyAsync(l => l.Id == parentId, ct).ConfigureAwait(false))
-            throw new InvalidOperationException($"父標籤 {parentId} 不存在。");
+            throw new InvalidOperationException($"parent label {parentId} does not exist.");
 
         var label = new Label
         {
@@ -41,7 +41,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         };
         _db.Set<Label>().Add(label);
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
-        _logger.LogDebug("已建立標籤 '{Name}'(Id: {Id})", label.Name, label.Id);
+        _logger.LogDebug("created label '{Name}' (Id: {Id})", label.Name, label.Id);
         return label;
     }
 
@@ -61,15 +61,15 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     public async Task RenameAsync(Guid labelId, string newName, CancellationToken ct = default)
     {
         var normalized = Normalize(newName)
-            ?? throw new ArgumentException("標籤名稱不可為空白。", nameof(newName));
+            ?? throw new ArgumentException("label name must not be blank.", nameof(newName));
         ValidateNameLength(normalized);
 
         var label = await _db.Set<Label>().FindAsync(new object[] { labelId }, ct).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"找不到標籤 {labelId}。");
+            ?? throw new InvalidOperationException($"label {labelId} not found.");
 
         var taken = await _db.Set<Label>().AnyAsync(l => l.Name == normalized && l.Id != labelId, ct).ConfigureAwait(false);
         if (taken)
-            throw new InvalidOperationException($"標籤名稱 '{normalized}' 已被使用。");
+            throw new InvalidOperationException($"label name '{normalized}' is already taken.");
 
         // 連結存的是 Id,改名是一次 O(1) 的 UPDATE,不需要任何 cascade
         label.Name = normalized;
@@ -82,23 +82,23 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         if (update is null) throw new ArgumentNullException(nameof(update));
 
         var label = await _db.Set<Label>().FindAsync(new object[] { labelId }, ct).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"找不到標籤 {labelId}。");
+            ?? throw new InvalidOperationException($"label {labelId} not found.");
 
         var originalName = label.Name;
         update(label);
 
         if (label.Id != labelId)
-            throw new InvalidOperationException("不可在 UpdateAsync 中修改標籤的 Id。");
+            throw new InvalidOperationException("a label's Id must not be changed inside UpdateAsync.");
 
         // 改名走與 RenameAsync 相同的規則(正規化 + 唯一性)
         if (!string.Equals(label.Name, originalName, StringComparison.Ordinal))
         {
             var normalized = Normalize(label.Name)
-                ?? throw new ArgumentException("標籤名稱不可為空白。", nameof(update));
+                ?? throw new ArgumentException("label name must not be blank.", nameof(update));
             ValidateNameLength(normalized);
             var taken = await _db.Set<Label>().AnyAsync(l => l.Name == normalized && l.Id != labelId, ct).ConfigureAwait(false);
             if (taken)
-                throw new InvalidOperationException($"標籤名稱 '{normalized}' 已被使用。");
+                throw new InvalidOperationException($"label name '{normalized}' is already taken.");
             label.Name = normalized;
         }
 
@@ -111,16 +111,16 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     public async Task DeleteAsync(Guid labelId, CancellationToken ct = default)
     {
         var label = await _db.Set<Label>().FindAsync(new object[] { labelId }, ct).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"找不到標籤 {labelId}。");
+            ?? throw new InvalidOperationException($"label {labelId} not found.");
 
         var hasChildren = await _db.Set<Label>().AnyAsync(l => l.ParentId == labelId, ct).ConfigureAwait(false);
         if (hasChildren)
             throw new InvalidOperationException(
-                $"標籤 '{label.Name}' 尚有子標籤,請先刪除或移動子標籤。(資料庫層亦以 Restrict 外鍵擋下)");
+                $"label '{label.Name}' still has children; delete or move them first. (The database also blocks this via a Restrict foreign key.)");
 
         _db.Set<Label>().Remove(label);
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);   // 各型別的連結由 cascade delete 自動清除
-        _logger.LogDebug("已刪除標籤 '{Name}'(Id: {Id})", label.Name, labelId);
+        _logger.LogDebug("deleted label '{Name}' (Id: {Id})", label.Name, labelId);
     }
 
     // ---- 貼標 / 撕標 ----
@@ -150,7 +150,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var descriptor = _registry.Require<T>();
         var list = new List<ILabelable>();
         foreach (var entity in entities)
-            list.Add(entity ?? throw new ArgumentException("實體集合中含有 null。", nameof(entities)));
+            list.Add(entity ?? throw new ArgumentException("the entity sequence contains a null.", nameof(entities)));
         if (list.Count == 0) return;
 
         var labels = await GetOrCreateLabelsAsync(labelNames, ct).ConfigureAwait(false);
@@ -198,7 +198,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var descriptor = _registry.Require<T>();
         var list = new List<ILabelable>();
         foreach (var entity in entities)
-            list.Add(entity ?? throw new ArgumentException("實體集合中含有 null。", nameof(entities)));
+            list.Add(entity ?? throw new ArgumentException("the entity sequence contains a null.", nameof(entities)));
 
         var result = new Dictionary<T, IReadOnlyList<Label>>(ReferenceEqualityComparer.Instance);
         if (list.Count == 0) return result;
@@ -276,7 +276,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     {
         if (label.ParentId is null) return;
         if (label.ParentId == label.Id)
-            throw new InvalidOperationException($"標籤 '{label.Name}' 不可以是自己的父標籤。");
+            throw new InvalidOperationException($"label '{label.Name}' cannot be its own parent.");
 
         var all = await _db.Set<Label>().AsNoTracking()
             .Select(l => new { l.Id, l.ParentId })
@@ -289,9 +289,9 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         {
             if (current == label.Id)
                 throw new InvalidOperationException(
-                    $"不可把標籤 '{label.Name}' 移到自己的子孫標籤底下(會形成循環)。");
+                    $"label '{label.Name}' cannot be moved under one of its own descendants (that would form a cycle).");
             if (!parentOf.TryGetValue(current.Value, out var next))
-                throw new InvalidOperationException($"父標籤 {current} 不存在。");
+                throw new InvalidOperationException($"parent label {current} does not exist.");
             current = next;
             if (++hops > parentOf.Count) break;   // 資料已異常成環時的防呆,交給上面的檢查擋
         }
@@ -354,7 +354,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     {
         if (normalized.Length > Label.MaxNameLength)
             throw new ArgumentException(
-                $"標籤名稱長度 {normalized.Length} 超過上限 {Label.MaxNameLength}:'{normalized[..16]}…'");
+                $"label name is {normalized.Length} characters, over the {Label.MaxNameLength} limit: '{normalized[..16]}…'");
     }
 
     /// <summary>
@@ -389,7 +389,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                 {
                     await _db.SaveChangesAsync(ct).ConfigureAwait(false);
                     _logger.LogInformation(
-                        "貼標時自動建立了標籤 '{Name}'(AutoCreateLabels 已啟用;策展式 App 建議設為 false)", name);
+                        "auto-created label '{Name}' while attaching (AutoCreateLabels is on; curated-label apps should set it to false)", name);
                 }
                 catch (DbUpdateException)
                 {
@@ -407,8 +407,8 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
         if (missing.Count > 0)
             throw new InvalidOperationException(
-                $"標籤 {string.Join("、", missing.Select(m => $"'{m}'"))} 不存在,而 AutoCreateLabels 已停用。" +
-                $"請先用 CreateAsync 建立(可帶顏色與圖示),或將 LabelRegistry.AutoCreateLabels 設回 true。");
+                $"label(s) {string.Join(", ", missing.Select(m => $"'{m}'"))} do not exist and AutoCreateLabels is disabled. " +
+                $"Create them with CreateAsync first (optionally with a color and icon), or set LabelRegistry.AutoCreateLabels back to true.");
 
         return result;
     }

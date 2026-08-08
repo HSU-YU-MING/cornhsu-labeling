@@ -1,50 +1,52 @@
 namespace Cornhsu.Labeling;
 
 /// <summary>
-/// 標籤本體。名稱全域唯一、支援父子階層與同層排序。
-/// 所有連結都以 <see cref="Id"/> 指向標籤,因此重新命名是一次 O(1) 的 UPDATE。
+/// The label itself. Names are globally unique; parent/child hierarchies and sibling ordering are supported.
+/// Every link points at <see cref="Id"/>, which is what makes a rename a single O(1) UPDATE.
 /// </summary>
 public class Label
 {
-    /// <summary>名稱長度上限。建立與改名時主動驗證,不依賴資料庫是否強制(SQLite 不強制)。</summary>
+    /// <summary>Maximum name length. Validated up front on create and rename, so it does not depend on
+    /// whether the database enforces it (SQLite does not).</summary>
     public const int MaxNameLength = 64;
 
-    /// <summary>主鍵。</summary>
+    /// <summary>Primary key.</summary>
     public Guid Id { get; set; }
 
-    /// <summary>顯示名稱,全域唯一。</summary>
+    /// <summary>Display name; globally unique.</summary>
     public string Name { get; set; } = default!;
 
-    /// <summary>顏色,建議 #RRGGBB。</summary>
+    /// <summary>Color, preferably as #RRGGBB.</summary>
     public string? Color { get; set; }
 
     /// <summary>
-    /// 圖示(純視覺,無業務語意):可放 emoji、圖示名稱或短碼,由 UI 自行解讀。
-    /// 與 <see cref="Color"/> 同層級——都是標籤的視覺識別。
-    /// 帶業務語意的欄位(型別、模組隔離、租戶…)請放你自己的伴生表,見 README「擴充 Label」。
+    /// Icon — purely visual, carries no business meaning: an emoji, an icon name or a short code,
+    /// interpreted by your UI. It sits at the same level as <see cref="Color"/>: both are visual identity.
+    /// Fields that do carry business meaning (type, module isolation, tenant…) belong in your own
+    /// companion table — see "Extending Label" in the README.
     /// </summary>
     public string? Icon { get; set; }
 
-    /// <summary>父標籤 Id;null 表示頂層。</summary>
+    /// <summary>Parent label id; null means top level.</summary>
     public Guid? ParentId { get; set; }
 
-    /// <summary>父標籤導覽屬性;null 表示頂層。</summary>
+    /// <summary>Parent navigation property; null means top level.</summary>
     public Label? Parent { get; set; }
 
-    /// <summary>子標籤集合。</summary>
+    /// <summary>Child labels.</summary>
     public ICollection<Label> Children { get; set; } = new List<Label>();
 
-    /// <summary>同層排序。</summary>
+    /// <summary>Ordering among siblings.</summary>
     public int SortOrder { get; set; }
 
-    /// <summary>建立時間(UTC)。</summary>
+    /// <summary>Creation time (UTC).</summary>
     public DateTimeOffset CreatedAt { get; set; }
 
     /// <summary>
-    /// 並發戳記(concurrency token):每次透過 <c>ILabelStore</c> 修改標籤時輪換。
-    /// 兩個執行緒/程序同時修改同一個標籤時,後存檔的一方會得到
-    /// <c>DbUpdateConcurrencyException</c>,而不是默默蓋掉先存的變更。
-    /// 不依賴資料庫產生(如 SQL Server rowversion),所有 provider 行為一致。
+    /// Concurrency token, rotated on every modification made through <c>ILabelStore</c>.
+    /// When two threads or processes modify the same label, the one that saves second gets a
+    /// <c>DbUpdateConcurrencyException</c> instead of silently overwriting the first one's change.
+    /// It is not database-generated (unlike SQL Server rowversion), so behaviour is identical across providers.
     /// </summary>
     public Guid ConcurrencyStamp { get; set; }
 }

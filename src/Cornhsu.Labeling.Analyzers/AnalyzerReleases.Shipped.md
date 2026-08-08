@@ -7,5 +7,5 @@
 
 Rule ID | Category | Severity | Notes
 --------|----------|----------|-------
-CHSU001 | Cornhsu.Labeling | Warning | ILabelable 型別未在編譯單元內以 r.Labelable\<T\>() 註冊
-CHSU002 | Cornhsu.Labeling | Warning | 只實作非泛型 ILabelable marker,註冊時必拋例外
+CHSU001 | Cornhsu.Labeling | Warning | Labelable type is not registered via r.Labelable\<T\>() in this compilation
+CHSU002 | Cornhsu.Labeling | Warning | Only the non-generic ILabelable marker is implemented; registration will throw

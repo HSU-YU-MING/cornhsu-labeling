@@ -2,14 +2,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Cornhsu.Labeling.EntityFrameworkCore;
 
-/// <summary>把標籤系統掛進 EF Core model 的擴充方法。</summary>
+/// <summary>Extension methods that wire the labeling system into an EF Core model.</summary>
 public static class ModelBuilderExtensions
 {
     /// <summary>
-    /// 在 <c>OnModelCreating</c> 中呼叫:配置 Label 表,並為每個已註冊型別產生一張 LabelLink_* 表。
+    /// Call this from <c>OnModelCreating</c>: it configures the Label table and generates one
+    /// LabelLink_* table per registered type.
     /// </summary>
-    /// <param name="b">EF Core 的 ModelBuilder。</param>
-    /// <param name="registry">標籤註冊表(必須是全 App 單例)。</param>
+    /// <param name="b">EF Core's ModelBuilder.</param>
+    /// <param name="registry">The label registry (must be an application-wide singleton).</param>
     public static ModelBuilder ApplyLabelModel(this ModelBuilder b, LabelRegistry registry)
     {
         b.Entity<Label>(e =>

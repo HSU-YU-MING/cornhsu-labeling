@@ -16,7 +16,10 @@
     <Company>Cornhsu</Company>
     <Copyright>Copyright © 許彧銘</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/HSU-YU-MING/cornhsu-labeling</PackageProjectUrl>
+    <!-- ProjectUrl 是「專案首頁」,RepositoryUrl 是「原始碼在哪」——兩者本來就不是同一件事。
+         原本兩格填同一個 GitHub 網址,等於白白浪費一格;首頁指向作品頁,說明更完整,
+         也讓 nuget.org、GitHub 與 cornhsu.com 被認成同一個專案。 -->
+    <PackageProjectUrl>https://cornhsu.com/cornhsu-labeling</PackageProjectUrl>
     <RepositoryUrl>https://github.com/HSU-YU-MING/cornhsu-labeling</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>

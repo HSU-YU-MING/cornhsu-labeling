@@ -19,8 +19,13 @@ updates:
     ignore:
       # 發布套件的 EF 樓地板。README 承諾「支援 EF Core 8+,消費端用 9/10 會自動 unify」,
       # 升到 9.x 會讓還在 EF 8 的使用者直接裝不起來。
+      #
+      # 連 patch 也一起擋(原本只擋 major/minor,#10 證明不夠):測試專案的
+      # CornhsuEfVersion 一個變數同時餵 Sqlite / SqlServer / Npgsql 三個 provider,
+      # 而 Microsoft 的 EF 8 線走到 8.0.29、Npgsql 只到 8.0.11。任何把它推過 8.0.11
+      # 的 patch 升級都會讓 Npgsql 浮動到 9.0.0,把 EF 9 拖進相依圖並炸掉建置。
+      # 8.0.11 是三者都存在的最高點,詳見 tests csproj 的註解。
       - dependency-name: "Microsoft.EntityFrameworkCore*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "Microsoft.Extensions.DependencyInjection*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       # 測試矩陣的 EF 基準版(tests 的 CornhsuEfVersion 預設值)。CI 另外跑 9/10,

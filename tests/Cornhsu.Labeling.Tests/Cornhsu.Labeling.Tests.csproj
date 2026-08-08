@@ -3,6 +3,11 @@
     <!-- EF 版本矩陣(CI 用):-p:CornhsuTestTfm=net10.0 -p:CornhsuEfVersion=10.0.*
          真的引用 EF 9/10 跑同一套測試,不是只換 SDK -->
     <CornhsuTestTfm Condition="'$(CornhsuTestTfm)' == ''">net8.0</CornhsuTestTfm>
+    <!-- ⚠ 8.0.11 是天花板,不要往上調。這個變數同時餵三個 provider,而兩家的 patch
+         節奏不同:Microsoft 的 EF 8 線走到 8.0.29,Npgsql 只到 8.0.11。推過 8.0.11,
+         Npgsql 解析不到對應版本 → NuGet 浮動到 9.0.0 → 把 EF Relational 9 拖進相依圖
+         → 撞上釘住的 8.x,NU1603 + NU1605 全紅(dependabot #10 實測)。
+         想解開就要把 Npgsql 拆成獨立變數 —— 那是有意識的改動,不是順手升版。 -->
     <CornhsuEfVersion Condition="'$(CornhsuEfVersion)' == ''">8.0.11</CornhsuEfVersion>
     <CornhsuDiVersion Condition="'$(CornhsuDiVersion)' == ''">8.0.1</CornhsuDiVersion>
 

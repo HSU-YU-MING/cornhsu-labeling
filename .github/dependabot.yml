@@ -1,7 +1,7 @@
 version: 2
 
 # 為什麼需要:這個 repo 的相依刻意釘在「8.0 系列中已修補已知弱點的版本」
-# (EF Core Relational 8.0.11、DI.Abstractions 8.0.2),而不是最低的 8.0.0。
+# (EF Core Relational 8.0.11、DI.Abstractions 8.0.2),而非最低的 8.0.0。
 # 那個判斷有保存期限 —— dependabot 讓「這條線又出了新的修補版」變成一則 PR。
 updates:
   - package-ecosystem: nuget
@@ -12,6 +12,26 @@ updates:
     groups:
       microsoft:
         patterns: ["Microsoft.*", "System.*"]
+
+    # 以下三組是**刻意的相容性樓地板**,不是忘了升級。dependabot 首次啟用時
+    # 一口氣提了這三項(#4/#6),全部都會在使用者無感的情況下縮小相容範圍,故明文忽略。
+    # 要抬樓地板時,是有意識地改 csproj + README + CHANGELOG,不是按 merge。
+    ignore:
+      # 發布套件的 EF 樓地板。README 承諾「支援 EF Core 8+,消費端用 9/10 會自動 unify」,
+      # 升到 9.x 會讓還在 EF 8 的使用者直接裝不起來。
+      - dependency-name: "Microsoft.EntityFrameworkCore*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "Microsoft.Extensions.DependencyInjection*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # 測試矩陣的 EF 基準版(tests 的 CornhsuEfVersion 預設值)。CI 另外跑 9/10,
+      # 預設值就是「EF 8 這條線」的覆蓋,被改掉等於靜默失去 EF 8 的測試。
+      - dependency-name: "Npgsql.EntityFrameworkCore.PostgreSQL"
+      # Analyzer 的 Roslyn 版本 = 消費端需要的最低 VS/SDK 世代。
+      # 4.8 對應 VS2022 17.8 / SDK 8,相容範圍最大(見 Analyzers csproj 註解)。
+      - dependency-name: "Microsoft.CodeAnalysis*"
+      # FluentAssertions 8 起改為商業授權(舊版 Apache 2.0)。授權模式的改變
+      # 不該由自動升級決定 —— 只在測試專案使用,留在 6.x 沒有任何損失。
+      - dependency-name: "FluentAssertions"
 
   - package-ecosystem: github-actions
     directory: /

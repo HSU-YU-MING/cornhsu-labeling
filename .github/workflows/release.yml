@@ -7,7 +7,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write  # 建 GitHub Release
       id-token: write   # Trusted Publishing:允許 GitHub 簽發 OIDC token 與 NuGet 交換臨時金鑰
     steps:
       - uses: actions/checkout@v7
@@ -40,3 +40,35 @@ jobs:
           -k ${{ steps.login.outputs.NUGET_API_KEY }}
           -s https://api.nuget.org/v3/index.json
           --skip-duplicate
+
+      # 建 GitHub Release。Marketplace 的版本呈現綁 Release,而使用者被要求 pin @vX.Y.Z 時,
+      # Releases 頁是他們唯一看得到「這版改了什麼」的地方 —— 先前四個 repo 幾乎都是空的。
+      # 內容直接取自 CHANGELOG 對應那一節,不另外手寫一份(單一事實來源)。
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v="${{ steps.ver.outputs.version }}"
+          # CHANGELOG 兩種標題格式都吃:「## 0.12.0」與「## [1.1.0] — 2026-08-07」
+          notes=$(awk -v v="$v" '
+            /^## / {
+              if (found) exit
+              line = $0; sub(/^## +\[?/, "", line)
+              if (index(line, v) == 1) {
+                rest = substr(line, length(v) + 1)
+                if (rest !~ /^[0-9.]/) { found = 1; next }
+              }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md)
+          [ -n "$notes" ] || notes="See CHANGELOG.md."
+          # 冪等:重跑 job 時改成更新既有 Release,而不是報錯
+          if gh release view "v$v" >/dev/null 2>&1; then
+            gh release edit "v$v" --notes "$notes"
+            echo "✔ 已更新既有 Release v$v"
+          else
+            gh release create "v$v" --title "v$v" --notes "$notes" --verify-tag
+            echo "✔ 已建立 Release v$v"
+          fi

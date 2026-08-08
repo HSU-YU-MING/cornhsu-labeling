@@ -12,7 +12,10 @@
   裡把游標移到 `AttachAsync` 上,跳出來的 IntelliSense 提示是中文。範圍涵蓋
   `ILabelStore`、`ILabelable`、`Label`、`LabelHit`、`LabelMatch`、`LabelRegistry`、
   `LabelLink`、`LabelStoreFactory`、`ILabelableDescriptor` 與兩個擴充方法類別。
-  (`EfLabelStore` / `LabelableDescriptor` 是 internal,其註解本來就不出貨,維持中文。)
+  `Cornhsu.Labeling.xml` 已無任何中文。
+  (`EfLabelStore` / `LabelableDescriptor` / `ILabelableOperations` 是 internal,註解維持中文 ——
+  它們仍會出現在 `Cornhsu.Labeling.EntityFrameworkCore.xml` 裡,但消費端存取不到那些成員,
+  IntelliSense 不會顯示。)
 - **例外訊息英文化**(18 處):標籤名稱驗證、重複名稱、找不到標籤、階層循環、
   未註冊型別、`AutoCreateLabels` 停用時的提示等。這些會進消費端的錯誤日誌。
 - **Analyzer 診斷文字英文化**:`CHSU001` / `CHSU002` 的 title 與 message ——

@@ -4,7 +4,7 @@
          真的引用 EF 9/10 跑同一套測試,不是只換 SDK -->
     <CornhsuTestTfm Condition="'$(CornhsuTestTfm)' == ''">net8.0</CornhsuTestTfm>
     <CornhsuEfVersion Condition="'$(CornhsuEfVersion)' == ''">8.0.11</CornhsuEfVersion>
-    <CornhsuDiVersion Condition="'$(CornhsuDiVersion)' == ''">8.0.1</CornhsuDiVersion>
+    <CornhsuDiVersion Condition="'$(CornhsuDiVersion)' == ''">10.0.10</CornhsuDiVersion>
 
     <TargetFramework>$(CornhsuTestTfm)</TargetFramework>
     <IsPackable>false</IsPackable>
@@ -16,7 +16,7 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="$(CornhsuEfVersion)" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="$(CornhsuEfVersion)" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="$(CornhsuDiVersion)" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageReference Include="FluentAssertions" Version="6.12.1" />

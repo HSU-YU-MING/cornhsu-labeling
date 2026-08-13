@@ -48,6 +48,15 @@ jobs:
           -p:CornhsuTestTfm=${{ matrix.tfm }}
           -p:CornhsuEfVersion=${{ matrix.ef }}
           -p:CornhsuDiVersion=${{ matrix.ef }}
+      # README 守門員也跑在新版 EF 上。README 承諾「支援 EF Core 8+,消費端用 9/10 會自動
+      # unify」,只驗樓地板等於只驗了承諾的下限 —— 而 README 教的 IQueryable 組合、
+      # DbContext 建構、IDesignTimeDbContextFactory 都正好是 EF 各版之間會動的東西。
+      # 每一輪會印出實際跑到的 EF 版本,所以旗標若被忽略,log 會直接露出來。
+      - run: >
+          dotnet run --project samples/ReadmeSnippets -c Release
+          -p:CornhsuTestTfm=${{ matrix.tfm }}
+          -p:CornhsuEfVersion=${{ matrix.ef }}
+          -p:CornhsuDiVersion=${{ matrix.ef }}
 
   # 同一套測試跑在真的 PostgreSQL 上(名稱 collation、DateTimeOffset、Guid 行為都不同)
   test-postgres:

@@ -16,6 +16,13 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.DependencyInjection;
 
+// 先報出這一輪真的跑在哪條線上。CI 的矩陣是用 -p:CornhsuEfVersion= 換 EF 版本,
+// 而一個被靜默忽略的旗標會讓矩陣看起來在跑三個版本、其實跑了三次同一個 ——
+// 印出來就不必相信旗標,直接看得到。
+Console.WriteLine(
+    $"— {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}, " +
+    $"EF Core {typeof(DbContext).Assembly.GetName().Version}");
+
 using var conn = new SqliteConnection("DataSource=:memory:");
 conn.Open();
 

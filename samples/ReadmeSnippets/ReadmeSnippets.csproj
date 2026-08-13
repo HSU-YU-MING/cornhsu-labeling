@@ -1,16 +1,27 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- EF 版本矩陣:-p:CornhsuTestTfm=net10.0 -p:CornhsuEfVersion=10.0.*
+         刻意沿用 Cornhsu.Labeling.Tests.csproj 的同一組屬性名(雖然這裡不是測試專案),
+         因為 CI 的矩陣是用同一組 -p: 旗標餵兩個專案 —— 換個名字只會多一份要記的東西。
+         README 承諾支援 EF Core 8+,所以「README 教的呼叫形狀在 9/10 也成立」要被守到,
+         不能只驗樓地板那一條線。 -->
+    <CornhsuTestTfm Condition="'$(CornhsuTestTfm)' == ''">net8.0</CornhsuTestTfm>
+    <!-- 預設值等於 src 的相依樓地板,理由與天花板的來龍去脈見
+         tests/Cornhsu.Labeling.Tests.csproj 的註解(那裡是正本,不要在這裡重複一份)。 -->
+    <CornhsuEfVersion Condition="'$(CornhsuEfVersion)' == ''">8.0.11</CornhsuEfVersion>
+    <CornhsuDiVersion Condition="'$(CornhsuDiVersion)' == ''">8.0.1</CornhsuDiVersion>
+
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>$(CornhsuTestTfm)</TargetFramework>
     <IsPackable>false</IsPackable>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Cornhsu.Labeling.EntityFrameworkCore\Cornhsu.Labeling.EntityFrameworkCore.csproj" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.11" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="$(CornhsuEfVersion)" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="$(CornhsuDiVersion)" />
     <!-- 只為了 IDesignTimeDbContextFactory:README 的 migrations 段落教的就是這個介面,
-         不引用它的話那段就沒有東西守著。 -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11" />
+         不引用它的話那段就沒有東西守著。版本跟著矩陣走,它與 EF 同線發佈。 -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(CornhsuEfVersion)" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,118 @@
+name: Bug report
+description: The labeling system did the wrong thing
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The three things that decide whether a labeling bug is reproducible are the **EF Core
+        version**, the **database provider**, and the **primary key type** — they are also
+        exactly the three axes this project's CI matrix covers, which means a report that
+        names all three can usually be turned into a failing test the same day. Thanks for
+        taking the time to fill them in.
+
+        Found a security problem instead? Please use
+        **Security → Report a vulnerability** rather than this form — see
+        [SECURITY.md](https://github.com/HSU-YU-MING/cornhsu-labeling/blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: >-
+        The `Cornhsu.Labeling` / `Cornhsu.Labeling.EntityFrameworkCore` version you referenced.
+        A `0.0.0-dev` value means a build from source — that's fine, just say which commit.
+      placeholder: 1.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ef
+    attributes:
+      label: EF Core version
+      description: The major version you reference, not the SDK you build with.
+      options:
+        - EF Core 8
+        - EF Core 9
+        - EF Core 10
+        - other / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Database provider
+      description: >-
+        Behaviour genuinely differs here — SQLite does not enforce `HasMaxLength`, SQL Server's
+        default collation is case-insensitive, PostgreSQL treats name collation and
+        `DateTimeOffset` differently again.
+      options:
+        - SQLite
+        - SQL Server
+        - PostgreSQL
+        - other (please say which in "Anything else")
+    validations:
+      required: true
+
+  - type: dropdown
+    id: keytype
+    attributes:
+      label: Primary key type of the affected entity
+      description: Mixed-key cross-type queries are the most bug-prone path in the package.
+      options:
+        - Guid
+        - int
+        - both (a cross-type query mixing them)
+        - something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: registration
+    attributes:
+      label: Your registration
+      description: >-
+        The `AddLabeling` call (or the `LabelRegistry` you built by hand), including anything
+        you changed from the defaults — `AutoCreateLabels`, `LinkTablePrefix`,
+        `LabelTableName`, a pinned `typeKey`.
+      render: csharp
+      placeholder: |
+        services.AddLabeling<AppDbContext>(r =>
+        {
+            r.Labelable<Note>(n => n.Title);
+            r.Labelable<TodoItem>(t => t.Content);
+        });
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: The calls that reproduce it
+      description: >-
+        The `ILabelStore` calls in order, and what came back. If you can shrink it to something
+        like `samples/ReadmeSnippets/Program.cs` (in-memory SQLite, no app around it), that is
+        the fastest possible path to a fix — but a rough sequence is still much better than a
+        description.
+      render: csharp
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: >-
+        The exception and stack trace if there was one, the generated SQL if you have it,
+        whether migrations or `EnsureCreated` built the schema, or whether it also happens on a
+        different provider. Optional, but any of these usually saves a round trip.
+    validations:
+      required: false

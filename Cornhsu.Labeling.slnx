@@ -2,6 +2,7 @@
   <Folder Name="/samples/">
     <Project Path="samples/Benchmark/Benchmark.csproj" />
     <Project Path="samples/MinimalConsole/MinimalConsole.csproj" />
+    <Project Path="samples/ReadmeSnippets/ReadmeSnippets.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Cornhsu.Labeling.Analyzers/Cornhsu.Labeling.Analyzers.csproj" />

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Cornhsu.Labeling.EntityFrameworkCore\Cornhsu.Labeling.EntityFrameworkCore.csproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.11" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <!-- 只為了 IDesignTimeDbContextFactory:README 的 migrations 段落教的就是這個介面,
+         不引用它的話那段就沒有東西守著。 -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11" />
+  </ItemGroup>
+</Project>

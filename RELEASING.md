@@ -15,7 +15,22 @@ git push origin v1.2.0
    `dotnet pack` → 以 **NuGet Trusted Publishing**（OIDC，無長期 API key）發佈
    `Cornhsu.Labeling` 與 `Cornhsu.Labeling.EntityFrameworkCore` → **自動建 GitHub Release**
 
-> 版號**只從 tag 來**。csproj 裡沒有寫死的 `<Version>`，不需要（也不該）事先改任何檔案的版號。
+> 版號**只從 tag 來**。不需要（也不該）事先改任何檔案的版號。
+
+### 為什麼 `Directory.Build.props` 裡是 `0.0.0-dev`
+
+那格**不能留空**。留空會退回 MSBuild 預設的 `1.0.0` —— 那是個看起來完全合理的真版本號，
+所以從原始碼建置出來的組件會自稱 1.0.0，而不會有任何人懷疑它。`0.0.0-dev` 是刻意選的：
+**錯得明顯勝過錯得像真的**。發版時 `release.yml` 用 `-p:Version=` 覆寫它，命令列的
+global property 一定贏過專案檔，所以這格永遠不會影響發出去的套件。
+
+⚠ 這個套件是**函式庫**，不是全域安裝的 CLI 工具，所以多一個 CLI 那邊不會有的陷阱：
+本機 `dotnet pack` 出來的 `0.0.0-dev` 若裝進一個同時引用正式版的專案，NuGet 會 unify
+到正式版，**你的本機改動被靜默忽略、而且沒有任何錯誤訊息**。要測本機修改就用
+`ProjectReference`，不要繞 pack + install。
+
+`SECURITY.md` 的 supported versions 一節也刻意不寫任何版本號 —— 寫了就是第二個版本來源，
+遲早跟 tag 說法不一致。
 
 ## 版本規則
 
@@ -52,6 +67,18 @@ dotnet test tests/Cornhsu.Labeling.Tests -p:CornhsuTestTfm=net10.0 -p:CornhsuEfV
 ```
 
 `samples/MinimalConsole` 也在 CI 跑 —— 它是「抽象是否成立」的哨兵，不只是示範。
+
+`samples/ReadmeSnippets` 是 **README 的守門員**：README 教的每一個呼叫都在那裡編譯並執行。
+改公開 API 的簽章時，`tests/` 會被迫跟著改（不然紅燈），但 README 是散文、不會被迫，
+於是文件會安靜地過期 —— 而讀者是照文件寫的。那支專案就是那個「被迫」。
+
+**在 README 加一段新的 API 用法時，同時在 ReadmeSnippets 補一行。** 這個守門員驗過會擋：
+把 `LabelHit.EntityIdAs<TKey>()` 多加一個必填參數，紅燈直接指到
+`samples/ReadmeSnippets/Program.cs`。
+
+> 這裡沒有「跑一次工具、跟 README 貼的輸出比對」那種檢查（Parity / XamlContrast 有），
+> 因為這是函式庫、沒有 console 輸出，README 裡一段都沒貼 —— 會走鐘的是 C# 片段，
+> 而讓片段編譯比比對字串更根治，也不需要 `-Update`。
 
 ## 首次發佈前的一次性設定（已完成）
 

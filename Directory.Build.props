@@ -16,6 +16,13 @@
     <Company>Cornhsu</Company>
     <Copyright>Copyright © 許彧銘</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <!-- 版本的唯一真相源是 git tag:release.yml 用 -p:Version= 覆寫這格。
+         這裡不能留空——留空會退回 MSBuild 預設的 1.0.0,那是個「看起來合理的真版本號」,
+         從原始碼建置出來的組件會自稱 1.0.0 而沒有人會懷疑它(已發佈的是 1.1.0 之後)。
+         0.0.0-dev 是刻意選的:錯得明顯勝過錯得像真的。
+         ⚠ 本機 `dotnet pack` 出來的 0.0.0-dev 若裝進一個同時引用正式版的專案,
+         NuGet 會 unify 到正式版,你的本機改動會被靜默忽略——用 ProjectReference 測本機修改。 -->
+    <Version>0.0.0-dev</Version>
     <!-- ProjectUrl 是「專案首頁」,RepositoryUrl 是「原始碼在哪」——兩者本來就不是同一件事。
          原本兩格填同一個 GitHub 網址,等於白白浪費一格;首頁指向作品頁,說明更完整,
          也讓 nuget.org、GitHub 與 cornhsu.com 被認成同一個專案。 -->

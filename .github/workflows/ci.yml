@@ -17,6 +17,9 @@ jobs:
       - run: dotnet test -c Release --no-build --verbosity normal
       # sample 一定要跟著建置——它是抽象是否成立的哨兵
       - run: dotnet run --project samples/MinimalConsole -c Release
+      # README 的守門員:README 教的每一個呼叫都在這裡編譯並執行。
+      # 改公開 API 的簽章時,tests/ 會被迫跟著改,README 不會——這一步就是那個「被迫」。
+      - run: dotnet run --project samples/ReadmeSnippets -c Release
 
   # EF Core 9/10:真的引用新版 EF 跑同一套測試(不是只換 SDK)
   test-ef-matrix:
@@ -42,6 +45,15 @@ jobs:
           dotnet-version: ${{ matrix.sdk }}
       - run: >
           dotnet test tests/Cornhsu.Labeling.Tests -c Release
+          -p:CornhsuTestTfm=${{ matrix.tfm }}
+          -p:CornhsuEfVersion=${{ matrix.ef }}
+          -p:CornhsuDiVersion=${{ matrix.ef }}
+      # README 守門員也跑在新版 EF 上。README 承諾「支援 EF Core 8+,消費端用 9/10 會自動
+      # unify」,只驗樓地板等於只驗了承諾的下限 —— 而 README 教的 IQueryable 組合、
+      # DbContext 建構、IDesignTimeDbContextFactory 都正好是 EF 各版之間會動的東西。
+      # 每一輪會印出實際跑到的 EF 版本,所以旗標若被忽略,log 會直接露出來。
+      - run: >
+          dotnet run --project samples/ReadmeSnippets -c Release
           -p:CornhsuTestTfm=${{ matrix.tfm }}
           -p:CornhsuEfVersion=${{ matrix.ef }}
           -p:CornhsuDiVersion=${{ matrix.ef }}

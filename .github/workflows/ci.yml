@@ -4,6 +4,10 @@ on:
     branches: [ main ]
   pull_request:
 
+# CI 只讀原始碼,不需要任何寫入權限。明確寫死最小權限,不吃 repo 的預設值。
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest

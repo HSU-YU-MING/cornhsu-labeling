@@ -310,6 +310,13 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 - **只支援 EF Core 8+**。相依樓地板是 8.0.11(8.0 系列中已修補已知弱點通報的版本),消費端用 EF Core 9/10 會自動 unify。
 - 測試請用 **SQLite in-memory,不要用 EF InMemory Provider**——後者不執行外鍵約束,測不到本套件的核心保證。
 
+## 另見
+
+[**EF Core 的多型標籤要怎麼做**](https://cornhsu.com/articles/ef-core-polymorphic-tagging)
+—— 講的是整個品類而不是這個套件:為什麼關聯式資料庫本來就無法對泛型外鍵做約束、
+四種可行架構各自的代價、怎麼選,以及四個會後悔的坑。文章推薦的正是本套件採用的架構,
+但寫給「永遠不會安裝它的人」也讀得下去 —— 自己手寫大約是一百行的事。
+
 ## 授權
 
 MIT

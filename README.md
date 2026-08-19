@@ -352,6 +352,15 @@ with network latency the difference is 49 round trips.
 - For tests, use **SQLite in-memory rather than the EF InMemory provider** — the latter does not
   enforce foreign keys, so it cannot test this package's central guarantee.
 
+## See also
+
+[**EF Core 的多型標籤要怎麼做**](https://cornhsu.com/articles/ef-core-polymorphic-tagging)
+(in Traditional Chinese) — background on the category rather than this package: why a relational
+database cannot constrain a generic foreign key in the first place, the four workable
+architectures and what each one actually costs, how to choose between them, and four mistakes
+that are expensive to undo. It recommends this package's approach, but is written to be useful
+to someone who never installs it — the hand-rolled version is about a hundred lines.
+
 ## License
 
 MIT

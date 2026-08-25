@@ -29,7 +29,7 @@ jobs:
       # Trusted Publishing:用 GitHub OIDC 向 nuget.org 換一把只活 1 小時的臨時金鑰,
       # 不需要保管長效 API key、也不需要 repo secret
       - name: NuGet login (OIDC → temp API key)
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0(v1 當時所指的 commit)
         id: login
         with:
           user: Cornhsu   # nuget.org 使用者名稱(不是 email)

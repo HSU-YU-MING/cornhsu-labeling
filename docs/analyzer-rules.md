@@ -37,11 +37,17 @@ services.AddLabeling<AppDbContext>(r =>
 ```
 
 **When to suppress.** The analyzer only sees one compilation at a time, and only calls that name the
-type directly. If your registration lives in another assembly (a composition-root project, for
-instance), or goes through a generic helper such as
-`static void Reg<T>(LabelRegistry r) where T : class, ILabelable => r.Labelable<T>()` (the analyzer
-cannot tell which types reach `T`), the warning is a false positive — suppress it with
-`#pragma warning disable CHSU001` around the type, a
+type directly. The warning is a false positive when:
+
+- the registration lives in another assembly (a composition-root project, for instance);
+- the registration goes through a generic helper such as
+  `static void Reg<T>(LabelRegistry r) where T : class, ILabelable => r.Labelable<T>()` (the analyzer
+  cannot tell which types reach `T`);
+- a generic entity is registered by a closed type: declaring `class Box<T> : ILabelable<int>` and
+  registering `r.Labelable<Box<string>>()` still reports `Type 'Box'`, because the analyzer compares
+  the registered `Box<string>` with the declared `Box<T>`.
+
+Suppress it with `#pragma warning disable CHSU001` around the type, a
 `[SuppressMessage("Cornhsu.Labeling", "CHSU001")]` attribute on it, or a `.editorconfig` entry.
 `.editorconfig` severities apply to files, not types, so scope the section to the file that declares
 the type:

@@ -49,7 +49,7 @@ README 承諾「支援 EF Core 8+，消費端用 9/10 會自動 unify」。把
 同理，`Cornhsu.Labeling.Analyzers` 的 `Microsoft.CodeAnalysis.CSharp` 版本
 決定了消費端需要的最低 VS/SDK 世代（目前 4.8 = VS2022 17.8 / SDK 8，相容範圍最大）。
 
-⚠ 真的要抬樓地板時，記得 `tests/Cornhsu.Labeling.Tests.csproj` 的 `CornhsuEfVersion`
+⚠ 真的要抬樓地板時，記得 `tests/Cornhsu.Labeling.Tests/Cornhsu.Labeling.Tests.csproj` 的 `CornhsuEfVersion`
 預設值必須跟著改成同一個版本 —— 它的意義就是「測我們對外承諾的最低版本」。
 但那個值目前**卡在 8.0.11**：它同時餵三個 provider，而 Npgsql 的 EF 8 線只到 8.0.11
 （Microsoft 走到 8.0.29）。詳見該 csproj 的註解。
@@ -59,7 +59,7 @@ README + CHANGELOG，不是按 merge。
 
 ## CI 矩陣
 
-每次 push 都跑：三資料庫（SQLite / SQL Server / PostgreSQL）× EF Core 8，
+每次 push 到 main 與每個 PR 都跑：三資料庫（SQLite / SQL Server / PostgreSQL）× EF Core 8，
 加上 SQLite × EF Core 9 / 10（SQL Server / PostgreSQL × EF 9/10 這 4 種組合 CI 沒有跑）。
 EF 9/10 是**真的引用新版 EF 跑同一套測試**，不是只換 SDK：
 

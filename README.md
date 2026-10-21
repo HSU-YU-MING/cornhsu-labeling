@@ -339,8 +339,9 @@ The package ships an analyzer — installing it is all it takes. Two rules:
 
 Full details, examples and fixes: [docs/analyzer-rules.md](docs/analyzer-rules.md).
 
-`CHSU001` is a false positive when the registration lives in another assembly, or goes through a
-generic helper (`r.Labelable<T>()` where `T` is a type parameter) — silence it with
+`CHSU001` is a false positive when the registration lives in another assembly, goes through a
+generic helper (`r.Labelable<T>()` where `T` is a type parameter), or registers a generic entity
+by a closed type (`r.Labelable<Box<string>>()` for `class Box<T> : ILabelable<int>`) — silence it with
 `#pragma warning disable CHSU001` around the type, or an `.editorconfig` entry for the file that
 declares it (`.editorconfig` severities apply per file, not per type).
 
@@ -386,8 +387,13 @@ with network latency the difference is 49 round trips.
   Supporting per-parent uniqueness in future would necessarily come with a path-addressing API
   (`"Life/Misc"`), which is v2 territory.
 - **Label names are trimmed of surrounding whitespace** (consistently, at every entry point).
-  Case sensitivity is left to the database collation — SQLite is case-sensitive by default,
-  SQL Server is not.
+  Case sensitivity is left to the database collation (SQLite is case-sensitive by default,
+  SQL Server is not), with one exception: the name-based queries (`FindByLabelAsync`,
+  `FindByLabelsAsync`, `QueryByLabelAsync`, `QueryByLabelsAsync`) match names with an ordinal,
+  case-sensitive comparison regardless of collation. On a case-insensitive collation,
+  `AttachAsync(note, "Paper")` reuses an existing `paper` label and `FindAsync("Paper")` finds it,
+  but `FindByLabelAsync("Paper")` returns nothing. Pass these queries the name exactly as stored
+  (`FindAsync` follows the collation and returns the label with its stored spelling).
 - **Get-or-create has a race**: two paths creating the same name concurrently will collide on the
   unique index, which is handled by re-reading and adopting the existing label. If the re-read
   shows it was not a same-name race, the original exception propagates.
@@ -398,7 +404,7 @@ with network latency the difference is 49 round trips.
   and retry or prompt the user.
 - **Tested against SQLite, SQL Server and PostgreSQL** (the same test suite, on every CI run, with
   EF Core 8; the EF Core 9 and 10 runs use SQLite only). Note that name case semantics vary with
-  collation, as described above.
+  collation, except for the name-based queries, as described above.
 - **`ILabelStore`'s write methods call your DbContext's `SaveChangesAsync`** — any other pending
   changes in that same context get committed along with them. That is the inherent trade-off of
   sharing a DbContext with the application; if you need isolation, call the store from a separate

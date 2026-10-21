@@ -214,10 +214,10 @@ The store does not own the DbContext; disposing it stays with you.
 `ApplyLabelModel` adds `Label` and one `LabelLink_*` table per type to your model, so
 `dotnet ef migrations add` generates them (with full foreign keys) without any extra setup.
 
-There is one detail worth knowing: because your DbContext's constructor needs a `LabelRegistry`
-and `dotnet ef` has no DI container at design time, you must supply an
-`IDesignTimeDbContextFactory`. **This matters especially for non-ASP.NET applications** (WPF,
-console, and so on):
+There is one detail worth knowing: your DbContext's constructor needs a `LabelRegistry`, and
+`dotnet ef` can only resolve it from your DI container when your app builds a host (ASP.NET Core,
+or the .NET Generic Host); otherwise you must supply an `IDesignTimeDbContextFactory`. **This
+matters especially for non-ASP.NET applications** (WPF, console, and so on):
 
 ```csharp
 public class DesignTimeFactory : IDesignTimeDbContextFactory<AppDbContext>

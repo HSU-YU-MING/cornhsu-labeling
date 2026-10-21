@@ -205,9 +205,9 @@ store 不擁有 DbContext,釋放它仍是你的責任。
 `ApplyLabelModel` 會把 `Label` 與每個型別的 `LabelLink_*` 表加進你的 model,
 所以 `dotnet ef migrations add` 會自動產生這些表(含完整外鍵),不需要額外設定。
 
-但有一個必知的細節:因為 DbContext 的建構子需要 `LabelRegistry`,而 `dotnet ef`
-在設計時期沒有 DI 容器,你必須提供一個 `IDesignTimeDbContextFactory`——
-**這對非 ASP.NET 應用(WPF、主控台等)尤其重要**:
+但有一個必知的細節:DbContext 的建構子需要 `LabelRegistry`,而 `dotnet ef` 只有在你的 App
+會建立 host(ASP.NET Core 或 .NET Generic Host)時,才能從 DI 容器取得它;否則你必須提供一個
+`IDesignTimeDbContextFactory`——**這對非 ASP.NET 應用(WPF、主控台等)尤其重要**:
 
 ```csharp
 public class DesignTimeFactory : IDesignTimeDbContextFactory<AppDbContext>

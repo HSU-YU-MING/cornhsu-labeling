@@ -64,9 +64,10 @@ public interface ILabelStore
 
     /// <summary>
     /// Bulk attach: applies the same set of labels to many entities (the "select several rows, tag them all
-    /// as urgent" case). Labels are resolved once, existing links are read in one query, and everything is
-    /// saved in a single SaveChanges. Idempotent — combinations that already exist are skipped.
-    /// Behaviour for labels that do not exist matches <see cref="AttachAsync{T}(T, string[])"/> (governed by AutoCreateLabels).
+    /// as urgent" case). Labels are resolved once, existing links are read in one query, and the new links
+    /// are saved in a single SaveChanges. Idempotent — combinations that already exist are skipped.
+    /// Behaviour for labels that do not exist matches <see cref="AttachAsync{T}(T, string[])"/> (governed by AutoCreateLabels):
+    /// labels that have to be auto-created are each saved first, on their own, so the operation as a whole is not atomic.
     /// </summary>
     /// <typeparam name="T">A registered labelable type.</typeparam>
     /// <param name="entities">Target entities (all must already exist in the database); an empty sequence returns immediately.</param>

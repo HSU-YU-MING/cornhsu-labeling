@@ -66,6 +66,9 @@
   只影響本來就是程式錯誤的呼叫;有人接 `NullReferenceException` 的話要改接 `ArgumentNullException`。
 
 ### Changed
+- **`ILabelStore.AttachManyAsync` 的 XML 註解更正**(patch,只改文件)。以前寫 "everything is saved in a single
+  SaveChanges",需要自動建立標籤時不成立:每個要建立的標籤各自先存一次,連結再一起存一次,整個操作不是原子的。
+  IntelliSense 現在照實寫;README 早已改正。
 - **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**
   (patch,只改文件)。這四支在記憶體以 Ordinal(區分大小寫)比對名稱,不跟資料庫 collation 走;
   `FindAsync`、貼標、撕標則在資料庫端比對。在不分大小寫的 collation 上(例如 SQL Server 預設),

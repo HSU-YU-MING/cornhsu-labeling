@@ -76,6 +76,31 @@ public class MultiLabelQueryTests
     }
 
     [Fact]
+    public async Task 三個標籤_All要三個都有_Any有一個就算()
+    {
+        // 兩個名稱時 All 只有「第一組為基底 + 一個交集」;第三組起的每一組都要各自再收斂一次
+        using var db = new TestDb();
+        var all3 = await db.AddNoteAsync("三個都有");
+        var two = await db.AddNoteAsync("缺第三個");
+        var thirdOnly = await db.AddNoteAsync("只有第三個");
+        await db.AddNoteAsync("都沒有");
+        await db.Store.AttachAsync(all3, "論文", "急件", "待讀");
+        await db.Store.AttachAsync(two, "論文", "急件");
+        await db.Store.AttachAsync(thirdOnly, "待讀");
+        var names = new[] { "論文", "急件", "待讀" };
+
+        (await db.Store.FindByLabelsAsync(names, LabelMatch.All)).Should().ContainSingle()
+            .Which.DisplayName.Should().Be("三個都有");
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All)).Select(n => n.Id).ToListAsync())
+            .Should().Equal(all3.Id);
+
+        (await db.Store.FindByLabelsAsync(names, LabelMatch.Any)).Select(h => h.DisplayName)
+            .Should().BeEquivalentTo(new[] { "三個都有", "缺第三個", "只有第三個" });
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.Any)).Select(n => n.Id).ToListAsync())
+            .Should().BeEquivalentTo(new[] { all3.Id, two.Id, thirdOnly.Id });
+    }
+
+    [Fact]
     public async Task 空名稱集合_回傳空結果()
     {
         using var db = new TestDb();
@@ -133,6 +158,34 @@ public class MultiLabelQueryTests
         var hits = await db.Store.FindByLabelsAsync(new[] { " 論文 ", "論文", "急件" }, LabelMatch.All);
 
         hits.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task 省略match與includeDescendants時_預設是Any且包含子孫()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("論文");
+        await db.Store.CreateAsync("文獻回顧", parentId: parent.Id);
+        var viaChild = await db.AddNoteAsync("只貼子標籤");
+        var urgentOnly = await db.AddNoteAsync("只貼急件");
+        await db.Store.AttachAsync(viaChild, "文獻回顧");
+        await db.Store.AttachAsync(urgentOnly, "急件");
+        var names = new[] { "論文", "急件" };
+
+        // 參數預設值會被編譯進呼叫端,屬公開介面:預設若變成 All,結果是空的;
+        // 預設若變成不含子孫,只貼子標籤的那筆會不見
+        (await db.Store.FindByLabelsAsync(names)).Select(h => h.DisplayName)
+            .Should().BeEquivalentTo(new[] { "只貼子標籤", "只貼急件" });
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(names)).Select(n => n.Id).ToListAsync())
+            .Should().BeEquivalentTo(new[] { viaChild.Id, urgentOnly.Id });
+    }
+
+    [Fact]
+    public void LabelMatch的數值是對外契約()
+    {
+        // 列舉值會被編譯進消費端的組件:對調數值等於讓沒重新編譯的呼叫端 All/Any 互換
+        ((int)LabelMatch.Any).Should().Be(0);
+        ((int)LabelMatch.All).Should().Be(1);
     }
 
     [Fact]

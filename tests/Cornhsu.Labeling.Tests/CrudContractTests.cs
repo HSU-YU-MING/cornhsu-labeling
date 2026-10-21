@@ -35,6 +35,37 @@ public class CrudContractTests
     }
 
     [Fact]
+    public async Task 貼標時自動建立的標籤_CreatedAt為UTC_戳記非空_沒有顏色圖示與父標籤()
+    {
+        using var db = new TestDb();   // AutoCreateLabels 預設 true
+        var note = await db.AddNoteAsync();
+        var todo = await db.AddTodoAsync();
+
+        // 自動建立走的是 get-or-create,不是 CreateAsync:兩條路(單筆與批次貼標)寫出的欄位要一樣齊全
+        var before = DateTimeOffset.UtcNow;
+        await db.Store.AttachAsync(note, "單筆自動");
+        await db.Store.AttachManyAsync(new[] { todo }, new[] { "批次自動" });
+        var after = DateTimeOffset.UtcNow;
+
+        using var other = db.CreateSecondContext();
+        var stored = await other.Set<Label>().AsNoTracking().ToListAsync();
+        stored.Select(l => l.Name).Should().BeEquivalentTo(new[] { "單筆自動", "批次自動" });
+        foreach (var label in stored)
+        {
+            label.Id.Should().NotBeEmpty();
+            label.Color.Should().BeNull();
+            label.Icon.Should().BeNull();
+            label.ParentId.Should().BeNull("自動建立的標籤一律在頂層");
+            label.SortOrder.Should().Be(0);
+            label.ConcurrencyStamp.Should().NotBeEmpty("戳記從建立那一刻就要有值,並發檢查才有基準");
+            label.CreatedAt.Offset.Should().Be(TimeSpan.Zero, "建立時間以 UTC 寫入");
+            // PostgreSQL 只存到微秒,上下各留 1 ms 的餘裕
+            label.CreatedAt.Should().BeOnOrAfter(before.AddMilliseconds(-1)).And.BeOnOrBefore(after.AddMilliseconds(1));
+        }
+        stored[0].ConcurrencyStamp.Should().NotBe(stored[1].ConcurrencyStamp, "每個標籤各自一個戳記");
+    }
+
+    [Fact]
     public async Task CreateAsync_同名已存在_拋出帶既有Id的例外且不新增()
     {
         using var db = new TestDb();
@@ -57,7 +88,8 @@ public class CrudContractTests
 
         var act = () => db.Store.CreateAsync(name!);
 
-        (await act.Should().ThrowAsync<ArgumentException>()).Which.ParamName.Should().Be("name");
+        (await act.Should().ThrowAsync<ArgumentException>().WithMessage("label name must not be blank.*"))
+            .Which.ParamName.Should().Be("name");
         (await db.Store.GetAllAsync()).Should().BeEmpty();
     }
 
@@ -109,7 +141,8 @@ public class CrudContractTests
 
         var act = () => db.Store.RenameAsync(label.Id, newName!);
 
-        (await act.Should().ThrowAsync<ArgumentException>()).Which.ParamName.Should().Be("newName");
+        (await act.Should().ThrowAsync<ArgumentException>().WithMessage("label name must not be blank.*"))
+            .Which.ParamName.Should().Be("newName");
         (await db.Store.FindAsync("論文")).Should().NotBeNull();
     }
 

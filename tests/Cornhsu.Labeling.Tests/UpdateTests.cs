@@ -122,6 +122,20 @@ public class UpdateTests
     }
 
     [Fact]
+    public async Task 透過Update把名稱改成只差前後空白的自己_不算被占用()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文");
+
+        // 字串跟原名不同,所以會走改名檢查;去空白後就是自己的名字,占用檢查要排除標籤自己
+        var updated = await db.Store.UpdateAsync(label.Id, l => l.Name = "  論文 ");
+
+        updated.Name.Should().Be("論文");
+        using var other = db.CreateSecondContext();
+        (await other.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == label.Id)).Name.Should().Be("論文");
+    }
+
+    [Fact]
     public async Task 回傳值是更新後的同一個標籤_戳記已輪換()
     {
         using var db = new TestDb();
@@ -182,7 +196,8 @@ public class UpdateTests
 
         var act = () => db.Store.UpdateAsync(label.Id, l => l.Name = name!);
 
-        (await act.Should().ThrowAsync<ArgumentException>()).Which.ParamName.Should().Be("update");
+        (await act.Should().ThrowAsync<ArgumentException>().WithMessage("label name must not be blank.*"))
+            .Which.ParamName.Should().Be("update");
         using var other = db.CreateSecondContext();
         (await other.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == label.Id)).Name.Should().Be("論文");
     }

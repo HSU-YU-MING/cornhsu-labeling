@@ -19,6 +19,27 @@ public class RegistrationTests
 
         (await act.Should().ThrowAsync<InvalidOperationException>())
             .WithMessage("type TestOrphan is not registered. Call r.Labelable<TestOrphan>() inside AddLabeling.");
+        (await db.Store.GetAllAsync()).Should().BeEmpty("型別檢查要在自動建立標籤之前,否則會留下沒人用的標籤");
+    }
+
+    /// <summary>已註冊型別 TestNote 的衍生類別,本身沒有註冊。</summary>
+    private sealed class SpecialNote : TestNote
+    {
+    }
+
+    [Fact]
+    public async Task 註冊了基底類別_衍生類別本身沒註冊_執行期一樣拋未註冊()
+    {
+        // 型別比對是精確比對,不沿繼承鏈往上找。analyzer 的 CHSU001 對衍生類別照報,靠的就是這一條
+        // (見 AnalyzerTests「已註冊基底類別的衍生類別本身沒註冊_照報」);改成接受衍生類別,那條警告就變誤報。
+        using var db = new TestDb();
+        var special = new SpecialNote { Id = Guid.NewGuid() };
+
+        var act = () => db.Store.AttachAsync(special, "論文");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("type SpecialNote is not registered. Call r.Labelable<SpecialNote>() inside AddLabeling.");
+        (await db.Store.GetAllAsync()).Should().BeEmpty();
     }
 
     [Fact] // #12

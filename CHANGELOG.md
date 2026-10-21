@@ -45,8 +45,9 @@
   例外型別與訊息不變。
 - **`GetLabelsOfManyAsync` 的排序改在資料庫做,與 `GetLabelsOfAsync`／`GetAllAsync` 一致**(patch)。
   以前名稱在記憶體用 Ordinal 排,不分大小寫的 collation 上 `SortOrder` 相同的標籤,同一個實體用兩種讀法
-  會排得不一樣(`B-upper, a-lower` 對 `a-lower, B-upper`)。區分大小寫的資料庫(SQLite、PostgreSQL 預設)
-  幾乎不受影響;極少數字元(BMP 以外的字元與 U+E000–U+FFFF 之間)的相對順序會改成跟資料庫一致。
+  會排得不一樣(`B-upper, a-lower` 對 `a-lower, B-upper`)。現在批次讀的順序一律跟資料庫的 collation 走:
+  SQL Server 預設、PostgreSQL 的語言學 collation 上,大小寫混雜的名稱順序會改變;SQLite 預設的 BINARY
+  幾乎不受影響,只有 BMP 以外的字元與 U+E000–U+FFFF 之間的相對順序會改成跟資料庫一致。
   README 的對應例外已移除。
 
 ### Changed

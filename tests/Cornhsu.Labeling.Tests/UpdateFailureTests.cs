@@ -154,6 +154,25 @@ public class UpdateFailureTests
         stored.ParentId.Should().BeNull();
     }
 
+    // ---- 消費端關掉自動偵測變更:store 改的欄位仍要存進去,戳記也要跟著輪換 ----
+
+    [Fact]
+    public async Task 自動偵測變更關掉時_RenameAsync與UpdateAsync仍會存檔_戳記照常輪換()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("原名");
+        db.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+
+        await db.Store.RenameAsync(label.Id, "新名");
+        await db.Store.UpdateAsync(label.Id, l => l.Color = "#FF0000");
+        await db.Store.UpdateAsync(label.Id, l => l.Name = "  再改  ");   // 戳記沒存進去的話,這次會撞並發例外
+
+        var stored = await StoredAsync(db, label.Id);
+        stored.Name.Should().Be("再改");
+        stored.Color.Should().Be("#FF0000");
+        stored.ConcurrencyStamp.Should().Be(label.ConcurrencyStamp);
+    }
+
     // ---- 循環檢查要看得到導覽屬性,以及同一個 context 裡其他標籤未存的 ParentId ----
 
     [Fact]

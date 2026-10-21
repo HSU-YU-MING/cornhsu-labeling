@@ -34,6 +34,10 @@
   `DetachAsync` 與自動建立標籤那一步失敗時,都會先還原自己動過的項目(`DeleteAsync` 連 EF 當下 cascade 掉的
   連結、被設成 null 的外鍵一起還原),遇到並發衝突再把衝突的標籤或連結從資料庫重讀,然後原例外照拋。
   你自己在同一個 context 裡還沒存的變更不會被動到。例外型別與訊息不變。
+- **context 關掉自動偵測變更(`ChangeTracker.AutoDetectChangesEnabled = false`)時,`RenameAsync`／`UpdateAsync`
+  也會存檔**(patch)。這兩支直接改追蹤中的 `Label` 屬性,以前靠 `SaveChanges` 自己偵測變更;關掉之後改名、
+  改欄位都靜默地沒有寫進資料庫,並發戳記也沒輪換。現在存檔前會偵測這個標籤自己的變更。
+  不會替你偵測其他實體——哪些未存變更跟著送出,仍照你的設定。
 
 ### Changed
 - **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**

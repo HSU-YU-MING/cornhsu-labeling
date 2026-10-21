@@ -79,6 +79,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         undo.Capture(_db.Entry(label));
         label.Name = normalized;
         label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
+        _db.Entry(label).DetectChanges();          // 消費端關掉自動偵測變更時,SaveChanges 不會自己發現這兩個欄位改了
         await SaveOrRestoreAsync(undo, null, ct).ConfigureAwait(false);
     }
 
@@ -138,6 +139,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             await EnsureNoCycleAsync(moved, ct).ConfigureAwait(false);
 
             label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
+            _db.Entry(label).DetectChanges();          // 消費端關掉自動偵測變更時,SaveChanges 不會自己發現正規化後的名稱與新戳記
             await _db.SaveChangesAsync(ct).ConfigureAwait(false);
             return label;
         }

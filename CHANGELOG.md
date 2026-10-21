@@ -21,6 +21,10 @@
   context 裡其他標籤還沒存的 `ParentId`(它們會在同一次存檔一起送出);lambda 經導覽屬性換了別的標籤的
   父標籤,那些標籤也一起檢查。沿用既有的循環例外與訊息,只多擋下本來就會成環的寫入。
   README 的「`UpdateAsync` 只依 `ParentId` 檢查循環」限制已移除。
+- **`UpdateAsync` 的 lambda 經導覽屬性改了別的標籤的名稱,也照名稱規則驗證**(patch)。以前只驗目標標籤,
+  `UpdateAsync(c.Id, l => l.Parent!.Name = "   ")` 會把空白名稱寫進父標籤(v1.1.0 就有)。現在 lambda 改了名稱的
+  其他標籤、以及經導覽屬性帶進來的新標籤,都照目標標籤的規則去空白、檢查空白、長度與唯一性,
+  例外型別、訊息與 `ParamName` 都沿用既有的。
 - **`QueryByLabelAsync`／`QueryByLabelsAsync` 對不上任何標籤時,回傳的也是 EF Core 查詢**(patch)。
   以前名稱都不存在、全是空白,或 `LabelMatch.All` 下缺任一名稱時,回傳的是記憶體裡的
   `Enumerable.Empty<T>().AsQueryable()`,接著呼叫 README 教的 `ToListAsync`／`CountAsync`／`AnyAsync`

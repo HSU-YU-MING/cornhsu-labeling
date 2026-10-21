@@ -155,6 +155,41 @@ public class UpdateFailureTests
         stored.ParentId.Should().BeNull();
     }
 
+    // ---- lambda 經導覽屬性改了別的標籤的名稱:跟目標標籤一樣驗證,不能從這裡繞過 ----
+
+    [Fact]
+    public async Task lambda經導覽屬性把父標籤的名稱改成空白_拋ArgumentException_資料庫不變()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+
+        var act = () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = "   ");
+
+        (await act.Should().ThrowAsync<ArgumentException>().WithMessage("label name must not be blank.*"))
+            .Which.ParamName.Should().Be("update");
+        parent.Name.Should().Be("p");
+        await db.Store.CreateAsync("x");
+        (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
+    }
+
+    [Fact]
+    public async Task lambda經導覽屬性把父標籤改成超長或已被占用的名稱_照樣擋下()
+    {
+        using var db = new TestDb();
+        await db.Store.CreateAsync("占用");
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+
+        var tooLong = () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = new string('長', Label.MaxNameLength + 1));
+        var taken = () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = "占用");
+
+        await tooLong.Should().ThrowAsync<ArgumentException>();
+        await taken.Should().ThrowAsync<InvalidOperationException>().WithMessage("label name '占用' is already taken.");
+        await db.Store.CreateAsync("x");
+        (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
+    }
+
     // ---- 在偵測變更之前就失敗:經導覽屬性的修改那時還沒寫回外鍵,還原也要撤得掉 ----
 
     [Fact]

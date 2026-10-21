@@ -95,11 +95,11 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         // 驗證或存檔失敗時整批還原——否則被擋下的值會留在追蹤器,在下一次 SaveChanges 落地。
         DetectLabelChanges();
         var snapshot = new TrackerSnapshot(_db);
-        var parentsBefore = new Dictionary<Label, Guid?>(ReferenceEqualityComparer.Instance);
+        var before = new Dictionary<Label, (Guid? ParentId, string Name)>(ReferenceEqualityComparer.Instance);
         foreach (var entry in _db.ChangeTracker.Entries<Label>())
         {
             snapshot.Capture(entry);
-            parentsBefore[entry.Entity] = entry.Entity.ParentId;
+            before[entry.Entity] = (entry.Entity.ParentId, entry.Entity.Name);
         }
         snapshot.Own(label);
 
@@ -118,27 +118,27 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
             // 改名走與 RenameAsync 相同的規則(正規化 + 唯一性)
             if (!string.Equals(label.Name, storedName, StringComparison.Ordinal))
+                await NormalizeNameForSaveAsync(label, nameof(update), ct).ConfigureAwait(false);
+
+            // lambda 經導覽屬性改了名稱、或帶進來的其他標籤,同一次存檔會一起寫出去:一樣驗,不能從這裡繞過
+            var tracked = _db.ChangeTracker.Entries<Label>().Select(e => e.Entity).ToList();
+            foreach (var other in tracked)
             {
-                var normalized = Normalize(label.Name)
-                    ?? throw new ArgumentException("label name must not be blank.", nameof(update));
-                ValidateNameLength(normalized);
-                var taken = await _db.Set<Label>().AnyAsync(l => l.Name == normalized && l.Id != labelId, ct).ConfigureAwait(false);
-                if (taken)
-                    throw new InvalidOperationException($"label name '{normalized}' is already taken.");
-                label.Name = normalized;
+                if (ReferenceEquals(other, label)) continue;
+                if (before.TryGetValue(other, out var was) && string.Equals(other.Name, was.Name, StringComparison.Ordinal)) continue;
+                await NormalizeNameForSaveAsync(other, nameof(update), ct).ConfigureAwait(false);
             }
 
             // 要檢查的:這個標籤本身(有父標籤時),以及 lambda 換了父標籤的每一個標籤
-            var moved = _db.ChangeTracker.Entries<Label>()
-                .Select(e => e.Entity)
+            var moved = tracked
                 .Where(l => ReferenceEquals(l, label)
-                    || !parentsBefore.TryGetValue(l, out var before)
-                    || before != l.ParentId)
+                    || !before.TryGetValue(l, out var was)
+                    || was.ParentId != l.ParentId)
                 .ToList();
             await EnsureNoCycleAsync(moved, ct).ConfigureAwait(false);
 
             label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
-            _db.Entry(label).DetectChanges();          // 消費端關掉自動偵測變更時,SaveChanges 不會自己發現正規化後的名稱與新戳記
+            DetectLabelChanges();                      // 消費端關掉自動偵測變更時,SaveChanges 不會自己發現正規化後的名稱與新戳記
             snapshot.ArmForSave();
             await _db.SaveChangesAsync(ct).ConfigureAwait(false);
             return label;
@@ -528,6 +528,22 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             typeof(Label).IsAssignableFrom(fk.PrincipalEntityType.ClrType)
             && fk.Properties.Count == 1
             && Equals(entry.Property(fk.Properties[0].Name).CurrentValue, labelId));
+
+    /// <summary>
+    /// 依 <see cref="RenameAsync"/> 的規則驗證標籤目前的名稱(去前後空白、不可空白、長度、全域唯一),
+    /// 通過就把正規化後的名稱寫回去。
+    /// </summary>
+    private async Task NormalizeNameForSaveAsync(Label label, string paramName, CancellationToken ct)
+    {
+        var normalized = Normalize(label.Name)
+            ?? throw new ArgumentException("label name must not be blank.", paramName);
+        ValidateNameLength(normalized);
+        var id = label.Id;
+        var taken = await _db.Set<Label>().AnyAsync(l => l.Name == normalized && l.Id != id, ct).ConfigureAwait(false);
+        if (taken)
+            throw new InvalidOperationException($"label name '{normalized}' is already taken.");
+        label.Name = normalized;
+    }
 
     /// <summary>建立與改名時主動驗證名稱長度(SQLite 不強制 HasMaxLength,不能只靠資料庫)。</summary>
     private static void ValidateNameLength(string normalized)

@@ -237,6 +237,21 @@ public class UpdateFailureTests
     // ---- 消費端關掉自動偵測變更:store 改的欄位仍要存進去,戳記也要跟著輪換 ----
 
     [Fact]
+    public async Task 自動偵測變更關掉時_RenameAsync單獨呼叫就存進資料庫_戳記照常輪換()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("原名");
+        db.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+
+        await db.Store.RenameAsync(label.Id, "新名");
+
+        // 這裡就斷言,不接著呼叫其他寫入方法:那會把沒存進去的改名一起帶出去,測不到 RenameAsync 自己
+        var stored = await StoredAsync(db, label.Id);
+        stored.Name.Should().Be("新名");
+        stored.ConcurrencyStamp.Should().Be(label.ConcurrencyStamp);
+    }
+
+    [Fact]
     public async Task 自動偵測變更關掉時_RenameAsync與UpdateAsync仍會存檔_戳記照常輪換()
     {
         using var db = new TestDb();

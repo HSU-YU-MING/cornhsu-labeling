@@ -154,6 +154,85 @@ public class UpdateFailureTests
         stored.ParentId.Should().BeNull();
     }
 
+    // ---- 在偵測變更之前就失敗:經導覽屬性的修改那時還沒寫回外鍵,還原也要撤得掉 ----
+
+    [Fact]
+    public async Task lambda經Parent導覽屬性改了之後自己拋例外_下一次寫入不會成環()
+    {
+        using var db = new TestDb();
+        var root = await db.Store.CreateAsync("root");
+        var child = await db.Store.CreateAsync("child", parentId: root.Id);
+
+        var act = () => db.Store.UpdateAsync(root.Id, l =>
+        {
+            l.Parent = child;
+            throw new FormatException("消費端自己的錯");
+        });
+        await act.Should().ThrowAsync<FormatException>();
+        await db.Store.CreateAsync("x");
+
+        (await StoredAsync(db, root.Id)).ParentId.Should().BeNull();
+        root.Parent.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task lambda經Children改了之後自己拋例外_下一次寫入不會成環()
+    {
+        using var db = new TestDb();
+        var root = await db.Store.CreateAsync("root");
+        var child = await db.Store.CreateAsync("child", parentId: root.Id);
+
+        var act = () => db.Store.UpdateAsync(child.Id, l =>
+        {
+            l.Children.Add(root);
+            throw new FormatException("消費端自己的錯");
+        });
+        await act.Should().ThrowAsync<FormatException>();
+        await db.Store.CreateAsync("x");
+
+        (await StoredAsync(db, root.Id)).ParentId.Should().BeNull();
+        child.Children.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task lambda經Parent導覽屬性改了又改Id_被擋下後下一次寫入不會成環()
+    {
+        using var db = new TestDb();
+        var root = await db.Store.CreateAsync("root");
+        var child = await db.Store.CreateAsync("child", parentId: root.Id);
+
+        var act = () => db.Store.UpdateAsync(root.Id, l =>
+        {
+            l.Parent = child;
+            l.Id = Guid.NewGuid();
+        });
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("a label's Id must not be changed inside UpdateAsync.");
+        await db.Store.CreateAsync("x");
+
+        (await StoredAsync(db, root.Id)).ParentId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task lambda改了Id又自己拋例外_原例外照拋_不被還原時的錯蓋掉_context仍可用()
+    {
+        using var db = new TestDb();
+        var root = await db.Store.CreateAsync("root");
+        var child = await db.Store.CreateAsync("child", parentId: root.Id);
+
+        var act = () => db.Store.UpdateAsync(root.Id, l =>
+        {
+            l.Parent = child;
+            l.Id = Guid.NewGuid();
+            throw new FormatException("消費端自己的錯");
+        });
+        await act.Should().ThrowAsync<FormatException>();
+
+        root.Id.Should().NotBeEmpty();
+        await db.Store.CreateAsync("x");   // 主鍵沒放回去的話,這次存檔會拋「key 不可修改」
+        (await StoredAsync(db, root.Id)).ParentId.Should().BeNull();
+    }
+
     // ---- 消費端關掉自動偵測變更:store 改的欄位仍要存進去,戳記也要跟著輪換 ----
 
     [Fact]

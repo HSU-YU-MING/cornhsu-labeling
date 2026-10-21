@@ -48,6 +48,29 @@ internal sealed class TrackerSnapshot
            || _items.Any(i => ReferenceEquals(i.Entry.Entity, entity) && i.State == EntityState.Unchanged);
 
     /// <summary>
+    /// 把記下的項目裡被改掉的主鍵直接寫回 CLR 屬性。lambda 在偵測變更之前改了主鍵的話,EF 還不知道,
+    /// 這時偵測變更或經 EF 把主鍵設回去都會拋「主鍵不可修改」;繞過 EF 寫回去,追蹤器裡的主鍵本來就沒變。
+    /// </summary>
+    public void RestoreKeys()
+    {
+        foreach (var item in _items)
+        {
+            if (item.Values is null) continue;
+            var key = item.Entry.Metadata.FindPrimaryKey();
+            if (key is null) continue;
+            foreach (var property in key.Properties)
+            {
+                var captured = item.Values[property];
+                if (Equals(captured, item.Entry.Property(property.Name).CurrentValue)) continue;
+                if (property.PropertyInfo is { CanWrite: true } info)
+                    info.SetValue(item.Entry.Entity, captured);
+                else
+                    property.FieldInfo?.SetValue(item.Entry.Entity, captured);
+            }
+        }
+    }
+
+    /// <summary>
     /// 還原:store 新加的實體 detach;<paramref name="detachUncapturedOf"/> 型別裡沒被記下的項目
     /// (例如 UpdateAsync 的 lambda 經導覽屬性帶進追蹤器的新標籤)也 detach;
     /// 記下的項目依記錄順序放回當時的值、已修改欄位與狀態。

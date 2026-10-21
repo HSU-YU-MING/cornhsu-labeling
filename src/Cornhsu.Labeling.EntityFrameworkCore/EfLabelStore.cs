@@ -111,10 +111,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             update(label);
 
             if (label.Id != labelId)
-            {
-                label.Id = labelId;   // 先放回主鍵,下面還原時偵測變更才不會因為主鍵被改而拋 EF 自己的例外
                 throw new InvalidOperationException("a label's Id must not be changed inside UpdateAsync.");
-            }
 
             // 導覽屬性(Parent、Children)的變更要等偵測變更才會寫回 ParentId;不先做,循環檢查看到的是舊值
             DetectLabelChanges();
@@ -147,6 +144,11 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         }
         catch (Exception ex)
         {
+            // lambda 可能在上面那次偵測變更之前就失敗(自己拋例外,或改了 Id 被擋下):經導覽屬性做的修改
+            // (l.Parent = x、x.Children.Add(l))那時還沒寫回外鍵,還原碰不到,下一次存檔照樣落地。
+            // 先把被改掉的主鍵放回去(否則偵測會因主鍵被改而拋),再盡力偵測一次,讓它們變成還原得掉的外鍵值
+            snapshot.RestoreKeys();
+            DetectLabelChangesBestEffort();
             snapshot.Restore(detachUncapturedOf: typeof(Label));
             await ReloadConflictsAsync(ex, snapshot).ConfigureAwait(false);
             throw;
@@ -340,6 +342,36 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     {
         foreach (var entry in _db.ChangeTracker.Entries<Label>().ToList())
             entry.DetectChanges();
+    }
+
+    /// <summary>
+    /// 還原前的偵測:同 <see cref="DetectLabelChanges"/>,但逐一偵測、各自吞掉失敗——
+    /// 某個標籤偵測不了(例如身分衝突)不能擋住其他標籤,也不能蓋掉呼叫端要拿到的原本那個例外。
+    /// 偵測失敗的那筆就照記下的值還原。
+    /// </summary>
+    private void DetectLabelChangesBestEffort()
+    {
+        var tracker = _db.ChangeTracker;
+        var autoDetect = tracker.AutoDetectChangesEnabled;
+        tracker.AutoDetectChangesEnabled = false;   // 列舉時不要讓 EF 先掃整個 context(那一步失敗就什麼都偵測不到)
+        try
+        {
+            foreach (var entry in tracker.Entries<Label>().ToList())
+            {
+                try
+                {
+                    entry.DetectChanges();
+                }
+                catch (Exception)
+                {
+                    // 只是還原前的準備:失敗就跳過這一筆
+                }
+            }
+        }
+        finally
+        {
+            tracker.AutoDetectChangesEnabled = autoDetect;
+        }
     }
 
     /// <summary>

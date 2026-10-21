@@ -71,7 +71,8 @@ D:\擴充功能\nuget\Labeling\cornhsu-labeling\   ← 真正的 git repo 在這
   這是函式庫、沒有 console 輸出，README 一段輸出都沒貼——會走鐘的是 C# 片段，
   而那個由 `samples/ReadmeSnippets` 用「編譯不過就紅燈」守著，比比對字串更根治。
 - 消費端 **QuillNest** (`D:\應用程式\QuillNest\QuillNest\QuillNest.csproj`) 目前釘在
-  `Cornhsu.Labeling.EntityFrameworkCore` **1.0.0**（走公開 nuget.org，不是本機 feed）。
+  `Cornhsu.Labeling.EntityFrameworkCore` **1.1.0**（`QuillNest.csproj:47`，2026-08-27 的 `3efde5c` 從 1.0.0 升上來；
+  走公開 nuget.org，不是本機 feed）。
   改公開 API 或 schema 時，它是唯一的真實使用者，值得順手看一眼。
 
 ## 專案界線：src 乾淨、tests/samples 才碰 provider

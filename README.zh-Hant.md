@@ -357,15 +357,12 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
   需要這種結構時,請把限定詞放進名稱本身(如「生活·雜項」)。
   未來若支援每父層唯一,勢必伴隨路徑定址(`"生活/雜項"`)的 API 改版,屬 v2 範疇。
 - **標籤名稱會自動去除前後空白**(所有輸入入口一致);大小寫語意交由資料庫 collation 決定(SQLite 預設區分大小寫、SQL Server 預設不區分),
-  但有兩個例外:
+  但有一個例外:
   - 以名稱查詢的 API(`FindByLabelAsync`、`FindByLabelsAsync`、`QueryByLabelAsync`、`QueryByLabelsAsync`)
     比對名稱時一律區分大小寫(Ordinal),不跟資料庫 collation 走。在不區分大小寫的 collation 上,
     `AttachAsync(note, "Paper")` 會沿用既有的 `paper` 標籤、`FindAsync("Paper")` 也找得到它,
     `FindByLabelAsync("Paper")` 卻什麼都查不到。呼叫這幾支查詢時,請傳入與儲存值完全相同的名稱
     (`FindAsync` 依 collation 比對,回傳的標籤帶著儲存時的寫法)。
-  - `GetLabelsOfManyAsync` 也用同樣的 Ordinal 比較排序名稱,`GetLabelsOfAsync` 與 `GetAllAsync` 則交給資料庫排序。
-    在不區分大小寫的 collation 上,`SortOrder` 相同的標籤因此可能順序不同:
-    `GetLabelsOfManyAsync` 把 `B` 排在 `a` 前面,`GetLabelsOfAsync` 則是 `a` 在 `B` 前面。
 - **get-or-create 標籤有競態**:兩條路徑同時建同名標籤會撞 unique index,以「重讀驗證後採用既有標籤」處理;若重讀發現不是同名競態,原例外照拋。
 - **並發修改保護**:`Label.ConcurrencyStamp` 是並發戳記(每次透過 store 修改就輪換,不依賴資料庫功能,所有 provider 行為一致)。兩邊同時修改同一個標籤時,後存檔的一方會得到 `DbUpdateConcurrencyException` 而不是默默蓋掉對方——請接住這個例外,重讀後重試或提示使用者。例外拋到你手上之前,store 已經把衝突的標籤從資料庫重讀,所以透過同一個 store(同一個 context)重讀拿到的就是資料庫的值。
 - **測試涵蓋 SQLite、SQL Server、PostgreSQL** 三個 provider(同一套測試,CI 每次都跑,EF Core 8;EF Core 9 / 10 那兩條只跑 SQLite)。注意名稱大小寫語意隨 collation 而異:SQLite 預設區分大小寫、SQL Server 預設不區分(例外見上)。

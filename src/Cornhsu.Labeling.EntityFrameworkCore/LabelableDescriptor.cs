@@ -137,18 +137,19 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         var typed = entities.Cast<TEntity>().ToList();
         var ids = typed.Select(e => e.Id).Distinct().ToList();
 
+        // 排序在資料庫做,和 GetLabelsAsync、GetAllAsync 一樣依 collation 排名稱;
+        // 在記憶體用 Ordinal 排的話,不分大小寫的 collation 上同一個實體兩種讀法的順序會不同
         var pairs = await db.Set<LabelLink<TEntity, TKey>>()
             .Where(l => ids.Contains(l.EntityId))
             .Select(l => new { l.EntityId, l.Label })
+            .OrderBy(p => p.Label.SortOrder).ThenBy(p => p.Label.Name)
             .ToListAsync(ct).ConfigureAwait(false);
 
         var byId = pairs
-            .GroupBy(p => p.EntityId)
+            .GroupBy(p => p.EntityId)   // GroupBy 保留群組內元素的原始順序,也就是資料庫排好的順序
             .ToDictionary(
                 g => g.Key,
-                g => (IReadOnlyList<Label>)g.Select(p => p.Label)
-                    .OrderBy(l => l.SortOrder).ThenBy(l => l.Name, StringComparer.Ordinal)
-                    .ToList());
+                g => (IReadOnlyList<Label>)g.Select(p => p.Label).ToList());
 
         // 以實例(參考相等)為鍵:呼叫端傳什麼就用什麼當 key,每個實體都保證有項目
         var result = new Dictionary<ILabelable, IReadOnlyList<Label>>(ReferenceEqualityComparer.Instance);

@@ -389,17 +389,13 @@ with network latency the difference is 49 round trips.
   (`"Life/Misc"`), which is v2 territory.
 - **Label names are trimmed of surrounding whitespace** (consistently, at every entry point).
   Case sensitivity is left to the database collation (SQLite is case-sensitive by default,
-  SQL Server is not), with two exceptions:
+  SQL Server is not), with one exception:
   - The name-based queries (`FindByLabelAsync`, `FindByLabelsAsync`, `QueryByLabelAsync`,
     `QueryByLabelsAsync`) match names with an ordinal, case-sensitive comparison regardless of
     collation. On a case-insensitive collation, `AttachAsync(note, "Paper")` reuses an existing
     `paper` label and `FindAsync("Paper")` finds it, but `FindByLabelAsync("Paper")` returns
     nothing. Pass these queries the name exactly as stored (`FindAsync` follows the collation and
     returns the label with its stored spelling).
-  - `GetLabelsOfManyAsync` sorts names with the same ordinal comparison, while `GetLabelsOfAsync`
-    and `GetAllAsync` leave the sorting to the database. On a case-insensitive collation, labels
-    with the same `SortOrder` can therefore come back in a different order: `GetLabelsOfManyAsync`
-    puts `B` before `a`, where `GetLabelsOfAsync` puts `a` before `B`.
 - **Get-or-create has a race**: two paths creating the same name concurrently will collide on the
   unique index, which is handled by re-reading and adopting the existing label. If the re-read
   shows it was not a same-name race, the original exception propagates.
@@ -411,7 +407,7 @@ with network latency the difference is 49 round trips.
   reaches you, so re-reading through the same store (and context) returns the database's values.
 - **Tested against SQLite, SQL Server and PostgreSQL** (the same test suite, on every CI run, with
   EF Core 8; the EF Core 9 and 10 runs use SQLite only). Note that name case semantics vary with
-  collation, apart from the exceptions described above.
+  collation, apart from the exception described above.
 - **`ILabelStore`'s write methods call your DbContext's `SaveChangesAsync`** — any other pending
   changes in that same context get committed along with them. That is the inherent trade-off of
   sharing a DbContext with the application; if you need isolation, call the store from a separate

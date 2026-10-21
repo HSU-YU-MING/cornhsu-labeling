@@ -43,6 +43,11 @@
   那次存檔還一起送出了 context 裡其他未存的變更。現在先查完全部名稱、驗證完要建立的名稱,才開始寫入;
   參數不合法就什麼都不建立、不存檔。`AutoCreateLabels = false` 的行為不變(缺的名稱照舊一次列出,不做長度檢查)。
   例外型別與訊息不變。
+- **`GetLabelsOfManyAsync` 的排序改在資料庫做,與 `GetLabelsOfAsync`／`GetAllAsync` 一致**(patch)。
+  以前名稱在記憶體用 Ordinal 排,不分大小寫的 collation 上 `SortOrder` 相同的標籤,同一個實體用兩種讀法
+  會排得不一樣(`B-upper, a-lower` 對 `a-lower, B-upper`)。區分大小寫的資料庫(SQLite、PostgreSQL 預設)
+  幾乎不受影響;極少數字元(BMP 以外的字元與 U+E000–U+FFFF 之間)的相對順序會改成跟資料庫一致。
+  README 的對應例外已移除。
 
 ### Changed
 - **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**

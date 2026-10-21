@@ -36,20 +36,18 @@ services.AddLabeling<AppDbContext>(r =>
 });
 ```
 
+The message names the type the way a registration has to spell it: a nested type with its containing
+type (`Outer.Note`), a generic type with its type parameters (`Box<T>`, `Outer<T>.Note`). For a
+generic entity, registering any constructed form (`r.Labelable<Box<string>>()`) counts as registering
+the declaration.
+
 **When to suppress.** The analyzer only sees one compilation at a time, and only calls that name the
 type directly. The warning is a false positive when:
 
 - the registration lives in another assembly (a composition-root project, for instance);
 - the registration goes through a generic helper such as
   `static void Reg<T>(LabelRegistry r) where T : class, ILabelable => r.Labelable<T>()` (the analyzer
-  cannot tell which types reach `T`);
-- the registered type carries type arguments, because the entity is generic or is nested inside a
-  generic class. Declaring `class Box<T> : ILabelable<int>` and registering `r.Labelable<Box<string>>()`
-  still reports `Type 'Box'`; declaring `Note : ILabelable<int>` inside `class Outer<T>` and
-  registering `r.Labelable<Outer<int>.Note>()` still reports `Type 'Note'`. The analyzer compares the
-  registered type (`Box<string>`, `Outer<int>.Note`) with the declared one (`Box<T>`, `Outer<T>.Note`),
-  and they never match. The registration the message suggests (`r.Labelable<Box>()`,
-  `r.Labelable<Note>()`) does not compile for these types.
+  cannot tell which types reach `T`).
 
 Suppress it with `#pragma warning disable CHSU001` around the type, a
 `[SuppressMessage("Cornhsu.Labeling", "CHSU001")]` attribute on it, or a `.editorconfig` entry.

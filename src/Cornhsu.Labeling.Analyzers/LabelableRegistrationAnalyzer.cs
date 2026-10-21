@@ -20,6 +20,14 @@ public sealed class LabelableRegistrationAnalyzer : DiagnosticAnalyzer
     private const string GenericTypeName = "Cornhsu.Labeling.ILabelable`1";
     private const string RegistryTypeName = "Cornhsu.Labeling.EntityFrameworkCore.LabelRegistry";
 
+    /// <summary>
+    /// CHSU001 訊息裡的型別寫法:帶外層型別與型別參數(Outer.Inner、Box&lt;T&gt;、Outer&lt;T&gt;.Note),
+    /// 讓訊息建議的 r.Labelable&lt;…&gt;() 照抄得進註冊呼叫。只寫 type.Name 的話,巢狀與泛型型別都編譯不過。
+    /// </summary>
+    private static readonly SymbolDisplayFormat RegistrationTypeFormat = new(
+        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypes,
+        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters);
+
     private const string HelpUriBase =
         "https://github.com/HSU-YU-MING/cornhsu-labeling/blob/main/docs/analyzer-rules.md#";
 
@@ -73,8 +81,10 @@ public sealed class LabelableRegistrationAnalyzer : DiagnosticAnalyzer
                     return;
                 if (method.ContainingType?.ToDisplayString() != RegistryTypeName)
                     return;
+                // 存宣告(OriginalDefinition):r.Labelable<Box<int>>() 與 r.Labelable<Outer<int>.Note>() 註冊的是
+                // 建構型別,候選清單裡的卻是宣告 Box<T>、Outer<T>.Note,直接比永遠對不上
                 if (method.TypeArguments[0] is INamedTypeSymbol entity)
-                    registered.TryAdd(entity, 0);
+                    registered.TryAdd(entity.OriginalDefinition, 0);
             }, OperationKind.Invocation);
 
             // 收集實作 ILabelable 的具象類別
@@ -106,7 +116,7 @@ public sealed class LabelableRegistrationAnalyzer : DiagnosticAnalyzer
                     else if (!registered.ContainsKey(type))
                     {
                         end.ReportDiagnostic(Diagnostic.Create(
-                            NotRegistered, location, type.Name, genericImpl.TypeArguments[0].Name));
+                            NotRegistered, location, type.ToDisplayString(RegistrationTypeFormat), genericImpl.TypeArguments[0].Name));
                     }
                 }
             });

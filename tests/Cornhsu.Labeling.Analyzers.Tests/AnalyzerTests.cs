@@ -245,7 +245,81 @@ public class AnalyzerTests
         diags.Select(d => d.GetMessage(CultureInfo.InvariantCulture))
             .Should().HaveCount(2)
             .And.ContainSingle(m => m.StartsWith("Type 'Orphan' ", StringComparison.Ordinal))
-            .And.ContainSingle(m => m.StartsWith("Type 'Lost' ", StringComparison.Ordinal));
+            .And.ContainSingle(m => m.StartsWith("Type 'Outer.Lost' ", StringComparison.Ordinal),
+                "巢狀型別帶外層型別名,訊息建議的 r.Labelable<Outer.Lost>() 才編譯得過");
+    }
+
+    [Fact]
+    public async Task 泛型實體以建構型別註冊_不報()
+    {
+        var diags = await AnalyzeAsync("""
+            using Cornhsu.Labeling;
+            using Cornhsu.Labeling.EntityFrameworkCore;
+
+            public class Box<T> : ILabelable<int> { public int Id { get; set; } }
+            public class Keyed<TKey> : ILabelable<TKey> where TKey : notnull { public TKey Id { get; set; } = default!; }
+
+            public static class Setup
+            {
+                public static void Configure(LabelRegistry r)
+                    => r.Labelable<Box<string>>(typeKey: "StringBox").Labelable<Keyed<int>>(typeKey: "IntKeyed");
+            }
+            """);
+
+        diags.Should().BeEmpty("註冊了任何一個建構型別,宣告就算有註冊");
+    }
+
+    [Fact]
+    public async Task 泛型類別裡的巢狀實體以建構型別註冊_不報()
+    {
+        var diags = await AnalyzeAsync("""
+            using Cornhsu.Labeling;
+            using Cornhsu.Labeling.EntityFrameworkCore;
+
+            public class Outer<T>
+            {
+                public class Note : ILabelable<int> { public int Id { get; set; } }
+            }
+
+            public static class Setup
+            {
+                public static void Configure(LabelRegistry r) => r.Labelable<Outer<int>.Note>();
+            }
+            """);
+
+        diags.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task 泛型與巢狀實體沒註冊_訊息裡的型別寫法照抄得進註冊呼叫()
+    {
+        var diags = await AnalyzeAsync("""
+            using Cornhsu.Labeling;
+
+            public class Box<T> : ILabelable<int> { public int Id { get; set; } }
+
+            public class Outer<T>
+            {
+                public class Note : ILabelable<int> { public int Id { get; set; } }
+            }
+
+            public class Plain
+            {
+                public class Inner : ILabelable<int> { public int Id { get; set; } }
+            }
+            """);
+
+        diags.Should().HaveCount(3).And.OnlyContain(d => d.Id == "CHSU001");
+        diags.Select(d => d.GetMessage(CultureInfo.InvariantCulture)).Should().BeEquivalentTo(
+            "Type 'Box<T>' implements ILabelable<Int32>, but this compilation contains no r.Labelable<Box<T>>() registration; " +
+            "attaching or querying it at run time will throw \"type is not registered\". " +
+            "Suppress this warning if the registration lives in another assembly.",
+            "Type 'Outer<T>.Note' implements ILabelable<Int32>, but this compilation contains no r.Labelable<Outer<T>.Note>() registration; " +
+            "attaching or querying it at run time will throw \"type is not registered\". " +
+            "Suppress this warning if the registration lives in another assembly.",
+            "Type 'Plain.Inner' implements ILabelable<Int32>, but this compilation contains no r.Labelable<Plain.Inner>() registration; " +
+            "attaching or querying it at run time will throw \"type is not registered\". " +
+            "Suppress this warning if the registration lives in another assembly.");
     }
 
     [Fact]

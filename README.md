@@ -339,10 +339,8 @@ The package ships an analyzer — installing it is all it takes. Two rules:
 
 Full details, examples and fixes: [docs/analyzer-rules.md](docs/analyzer-rules.md).
 
-`CHSU001` is a false positive when the registration lives in another assembly, goes through a
-generic helper (`r.Labelable<T>()` where `T` is a type parameter), or registers a type that carries
-type arguments: a generic entity (`r.Labelable<Box<string>>()` for `class Box<T> : ILabelable<int>`)
-or an entity nested inside a generic class (`r.Labelable<Outer<int>.Note>()`). Silence it with
+`CHSU001` is a false positive when the registration lives in another assembly or goes through a
+generic helper (`r.Labelable<T>()` where `T` is a type parameter). Silence it with
 `#pragma warning disable CHSU001` around the type, or an `.editorconfig` entry for the file that
 declares it (`.editorconfig` severities apply per file, not per type).
 

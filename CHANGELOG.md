@@ -49,6 +49,16 @@
   SQL Server 預設、PostgreSQL 的語言學 collation 上,大小寫混雜的名稱順序會改變;SQLite 預設的 BINARY
   幾乎不受影響,只有 BMP 以外的字元與 U+E000–U+FFFF 之間的相對順序會改成跟資料庫一致。
   README 的對應例外已移除。
+- **`CHSU001` 不再對帶型別引數的註冊誤報;巢狀與泛型型別的訊息改成照抄得進註冊呼叫的寫法**
+  (少報是 patch;**訊息文字有改,這一條算 minor**)。
+  - 誤報:`r.Labelable<Box<int>>()`(`class Box<T> : ILabelable<int>`)與 `r.Labelable<Outer<int>.Note>()`
+    (泛型類別裡的巢狀實體)以前照樣報 `CHSU001`,因為註冊收到的是建構型別、比對的是宣告,兩者永遠不相等。
+    現在比的是宣告:任何一個建構型別有註冊,宣告就算有註冊。為了這兩種情況加的 `#pragma warning disable CHSU001`
+    或 `.editorconfig` 抑制可以拿掉。跨組件註冊、經泛型 helper 註冊仍然會誤報(本質限制,README 有寫)。
+  - 訊息:以前 `{0}` 是 `type.Name`,對巢狀型別建議 `r.Labelable<Inner>()`、對泛型型別建議 `r.Labelable<Box>()`,
+    都編譯不過。現在帶外層型別與型別參數:`Type 'Outer.Inner' …`、`Type 'Box<T>' …`、`Type 'Outer<T>.Note' …`。
+    頂層非泛型型別(絕大多數情況)的訊息一字不變。規則 ID、嚴重度、分類、`CHSU002` 的訊息都不變。
+    有人 grep 或斷言巢狀型別的 `CHSU001` 訊息的話要跟著改,所以升 minor。
 
 ### Changed
 - **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**

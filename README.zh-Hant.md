@@ -320,9 +320,7 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 
 完整說明、範例與修法:[docs/analyzer-rules.md](docs/analyzer-rules.md)。
 
-註冊發生在其他組件、透過泛型 helper 註冊(`r.Labelable<T>()` 的 `T` 是型別參數)、
-或註冊的型別帶有型別引數(泛型實體 `class Box<T> : ILabelable<int>` 以 `r.Labelable<Box<string>>()` 註冊,
-或泛型類別裡的巢狀實體以 `r.Labelable<Outer<int>.Note>()` 註冊)時,
+註冊發生在其他組件,或透過泛型 helper 註冊(`r.Labelable<T>()` 的 `T` 是型別參數)時,
 `CHSU001` 會誤報,請在該型別周圍用 `#pragma warning disable CHSU001`,
 或在 .editorconfig 針對宣告它的檔案靜音(.editorconfig 的嚴重度以檔案為單位,無法指定型別)。
 

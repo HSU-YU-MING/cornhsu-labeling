@@ -366,10 +366,6 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
   - `GetLabelsOfManyAsync` 也用同樣的 Ordinal 比較排序名稱,`GetLabelsOfAsync` 與 `GetAllAsync` 則交給資料庫排序。
     在不區分大小寫的 collation 上,`SortOrder` 相同的標籤因此可能順序不同:
     `GetLabelsOfManyAsync` 把 `B` 排在 `a` 前面,`GetLabelsOfAsync` 則是 `a` 在 `B` 前面。
-- **名稱一個都對不上時,`QueryByLabelAsync` 與 `QueryByLabelsAsync` 回傳的是記憶體裡的空 `IQueryable`,不是 EF Core 查詢。**
-  情境是名稱全都不存在,或在 `LabelMatch.All` 下任一名稱不存在——最常見的是還沒有任何標籤的新資料庫。
-  對這個結果呼叫 EF Core 的非同步運算子(`ToListAsync`、`CountAsync`…)會拋 `InvalidOperationException`。
-  請先判斷 `query is IAsyncEnumerable<Note>`,`false` 就當成空結果;或改用同步運算子(`ToList()`、`Count()`),兩種結果都能用。
 - **get-or-create 標籤有競態**:兩條路徑同時建同名標籤會撞 unique index,以「重讀驗證後採用既有標籤」處理;若重讀發現不是同名競態,原例外照拋。
 - **並發修改保護**:`Label.ConcurrencyStamp` 是並發戳記(每次透過 store 修改就輪換,不依賴資料庫功能,所有 provider 行為一致)。兩邊同時修改同一個標籤時,後存檔的一方會得到 `DbUpdateConcurrencyException` 而不是默默蓋掉對方——請接住這個例外,重讀後重試或提示使用者。
 - **測試涵蓋 SQLite、SQL Server、PostgreSQL** 三個 provider(同一套測試,CI 每次都跑,EF Core 8;EF Core 9 / 10 那兩條只跑 SQLite)。注意名稱大小寫語意隨 collation 而異:SQLite 預設區分大小寫、SQL Server 預設不區分(例外見上)。

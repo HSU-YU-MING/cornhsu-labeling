@@ -26,13 +26,49 @@ public class QueryContractTests
         var note = await db.AddNoteAsync();
         await db.Store.AttachAsync(note, "論文");
 
-        // 這裡刻意用同步列舉:目前名稱解析為空時回傳的不是 EF 支撐的查詢,
-        // 對它呼叫 ToListAsync / CountAsync 會拋例外(另案回報)。這條只釘「結果是空的」,
-        // 不管將來改成哪一種空查詢都應該成立。
+        // 同步列舉也要能用;非同步運算子見下一條
         (await db.Store.QueryByLabelAsync<TestNote>("不存在")).ToList().Should().BeEmpty();
         (await db.Store.QueryByLabelsAsync<TestNote>(new[] { "論文", "不存在" }, LabelMatch.All)).ToList().Should().BeEmpty();
         (await db.Store.QueryByLabelsAsync<TestNote>(new[] { "不存在", "也不存在" }, LabelMatch.Any)).ToList().Should().BeEmpty();
         (await db.Store.QueryByLabelsAsync<TestNote>(new[] { "  ", "" })).ToList().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task QueryByLabelAsync_名稱解析為空_回傳的仍是EF查詢_非同步運算子與續接都能用()
+    {
+        using var db = new TestDb();
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "論文");
+
+        var queries = new[]
+        {
+            await db.Store.QueryByLabelAsync<TestNote>("不存在"),
+            await db.Store.QueryByLabelsAsync<TestNote>(new[] { "論文", "不存在" }, LabelMatch.All),
+            await db.Store.QueryByLabelsAsync<TestNote>(new[] { "不存在", "也不存在" }, LabelMatch.Any),
+            await db.Store.QueryByLabelsAsync<TestNote>(new[] { "  ", "" }),
+            await db.Store.QueryByLabelsAsync<TestNote>(Array.Empty<string>()),
+        };
+
+        foreach (var query in queries)
+        {
+            query.Should().BeAssignableTo<IAsyncEnumerable<TestNote>>("README 教的 ToListAsync / CountAsync 要能直接用");
+            (await query.ToListAsync()).Should().BeEmpty();
+            (await query.CountAsync()).Should().Be(0);
+            (await query.AnyAsync()).Should().BeFalse();
+            (await query.Where(n => n.Title != "").OrderBy(n => n.Title).Skip(1).Take(5).ToListAsync()).Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task QueryByLabelAsync_還沒有任何標籤的新資料庫_非同步計數為零()
+    {
+        using var db = new TestDb();
+        await db.AddNoteAsync();
+
+        var query = await db.Store.QueryByLabelAsync<TestTodo>("論文");
+
+        (await query.CountAsync()).Should().Be(0);
+        (await query.FirstOrDefaultAsync()).Should().BeNull();
     }
 
     [Fact]

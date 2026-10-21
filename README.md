@@ -400,13 +400,6 @@ with network latency the difference is 49 round trips.
     and `GetAllAsync` leave the sorting to the database. On a case-insensitive collation, labels
     with the same `SortOrder` can therefore come back in a different order: `GetLabelsOfManyAsync`
     puts `B` before `a`, where `GetLabelsOfAsync` puts `a` before `B`.
-- **When no label matches, `QueryByLabelAsync` and `QueryByLabelsAsync` return an in-memory empty
-  `IQueryable`, not an EF Core query.** That happens when none of the names exists, or, with
-  `LabelMatch.All`, when any one of them is missing — a new database with no labels yet is the
-  usual case. EF Core's async operators (`ToListAsync`, `CountAsync`, …) throw
-  `InvalidOperationException` on that result. Check `query is IAsyncEnumerable<Note>` first and
-  treat `false` as an empty result, or use the synchronous operators (`ToList()`, `Count()`),
-  which work on both.
 - **Get-or-create has a race**: two paths creating the same name concurrently will collide on the
   unique index, which is handled by re-reading and adopting the existing label. If the re-read
   shows it was not a same-name race, the original exception propagates.

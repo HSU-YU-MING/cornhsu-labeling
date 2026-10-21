@@ -18,6 +18,13 @@
   context 裡其他標籤還沒存的 `ParentId`(它們會在同一次存檔一起送出);lambda 經導覽屬性換了別的標籤的
   父標籤,那些標籤也一起檢查。沿用既有的循環例外與訊息,只多擋下本來就會成環的寫入。
   README 的「`UpdateAsync` 只依 `ParentId` 檢查循環」限制已移除。
+- **`QueryByLabelAsync`／`QueryByLabelsAsync` 對不上任何標籤時,回傳的也是 EF Core 查詢**(patch)。
+  以前名稱都不存在、全是空白,或 `LabelMatch.All` 下缺任一名稱時,回傳的是記憶體裡的
+  `Enumerable.Empty<T>().AsQueryable()`,接著呼叫 README 教的 `ToListAsync`／`CountAsync`／`AnyAsync`
+  就拋 `InvalidOperationException`——還沒有任何標籤的新資料庫第一次查就會遇到。現在回傳 EF 支撐的空查詢,
+  非同步運算子與續接的 Where/OrderBy/Skip 都照常可用。回傳型別仍是 `IQueryable<T>`;
+  README 以前建議的 `query is IAsyncEnumerable<T>` 判斷現在永遠為 true,留著也不會壞,可以拿掉。
+  README 的對應限制段已移除。
 
 ### Changed
 - **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**

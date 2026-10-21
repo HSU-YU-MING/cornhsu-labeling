@@ -79,7 +79,6 @@ var todoIds = all
 // 只驗 README 明講的事;行為的完整驗證在 tests/,不要在這裡長成第二套測試。
 Check(all.Count == 2, "FindByLabelAsync 跨型別:Note 與 TodoItem 都在結果裡");
 Check(await notes.CountAsync() == 1, "QueryByLabelAsync<Note> 是可以繼續組合的 IQueryable");
-Check(notes is IAsyncEnumerable<Note>, "有命中時是 EF 查詢:README Limitations 教的 is IAsyncEnumerable<T> 才分得出空結果");
 Check(urgent.Count == 1 && await either.CountAsync() == 1, "LabelMatch.All / Any 都吃得到");
 Check(labelsByNote.Count == visibleNotes.Count, "GetLabelsOfManyAsync:每個 entity 都有一格");
 Check(todoIds.Single() == todo.Id, "EntityIdAs<int>() 拿得到 TodoItem 的 int 主鍵");

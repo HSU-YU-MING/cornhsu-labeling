@@ -280,7 +280,9 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var descriptor = _registry.Require<T>();
 
         var groups = await ResolveLabelIdGroupsAsync(labelNames, includeDescendants, match, ct).ConfigureAwait(false);
-        if (groups is null) return Enumerable.Empty<T>().AsQueryable();
+        // 結果必為空時也要回 EF 支撐的查詢:呼叫端會接著用 ToListAsync / CountAsync,
+        // 記憶體裡的空 IQueryable(Enumerable.Empty().AsQueryable())對那些運算子會拋例外
+        if (groups is null) return _db.Set<T>().Where(_ => false);
 
         return (IQueryable<T>)descriptor.CreateQueryByLabels(_db, groups, match);
     }

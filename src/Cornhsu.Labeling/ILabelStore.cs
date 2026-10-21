@@ -109,12 +109,14 @@ public interface ILabelStore
     // ---- 查詢 ----
 
     /// <summary>Cross-type query: returns every entity carrying the given label, as <see cref="LabelHit"/> values.</summary>
+    /// <remarks>The name is matched as described on <see cref="FindByLabelsAsync"/>.</remarks>
     /// <param name="labelName">Label name.</param>
     /// <param name="includeDescendants">Whether entities matched via descendant labels are included.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<LabelHit>> FindByLabelAsync(string labelName, bool includeDescendants = true, CancellationToken ct = default);
 
     /// <summary>Single-type, strongly typed query: returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.</summary>
+    /// <remarks>The name is matched as described on <see cref="FindByLabelsAsync"/>.</remarks>
     /// <typeparam name="T">A registered labelable type.</typeparam>
     /// <param name="labelName">Label name.</param>
     /// <param name="includeDescendants">Whether entities matched via descendant labels are included.</param>
@@ -128,6 +130,12 @@ public interface ILabelStore
     /// An empty sequence returns an empty result; under <see cref="LabelMatch.All"/>, a single missing name
     /// necessarily makes the result empty.
     /// </summary>
+    /// <remarks>
+    /// Names are trimmed and then matched against the stored names with an ordinal, case-sensitive
+    /// comparison, whatever the database collation is. <see cref="FindAsync"/>, the attach methods and the
+    /// detach methods compare in the database instead, so on a case-insensitive collation they can find a
+    /// label that these queries do not: pass the name exactly as it is stored.
+    /// </remarks>
     /// <param name="labelNames">Label names.</param>
     /// <param name="match">Match mode (AND / OR); defaults to <see cref="LabelMatch.Any"/>.</param>
     /// <param name="includeDescendants">Whether entities matched via descendant labels are included.</param>
@@ -140,6 +148,7 @@ public interface ILabelStore
     /// Multi-label single-type strongly typed query with the same semantics as <see cref="FindByLabelsAsync"/>;
     /// returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.
     /// </summary>
+    /// <remarks>Names are matched as described on <see cref="FindByLabelsAsync"/>.</remarks>
     /// <typeparam name="T">A registered labelable type.</typeparam>
     /// <param name="labelNames">Label names.</param>
     /// <param name="match">Match mode (AND / OR); defaults to <see cref="LabelMatch.Any"/>.</param>

@@ -8,11 +8,34 @@ namespace Cornhsu.Labeling.Tests;
 /// 名稱大小寫:套件只去前後空白、不動大小寫,比對交給資料庫 collation(README Limitations 明文:
 /// SQLite 預設區分大小寫,SQL Server 預設不區分)。同一套測試在三個 provider 上都要成立。
 /// 例外是以名稱查詢的 FindByLabel(s)Async / QueryByLabel(s)Async:它們在記憶體以 Ordinal 比對名稱,
-/// 不跟 collation 走(README Limitations、docs/公開介面盤點.md §1.2 #16 與 §7.4)。那是已回報的產品行為,
-/// 所以不區分大小寫的分支刻意不呼叫它們,免得把它釘成規格;區分大小寫的分支裡 Ordinal 與 collation 一致,可以照常驗。
+/// 不跟 collation 走(README Limitations、docs/公開介面盤點.md §1.2 #16 與 §7.4)。
+/// 要不要改成跟 collation 走是還沒拍板的語意決定,所以下面那條「現行行為」測試刻意把它釘住:
+/// 改它就是改對外行為,要連同 README Limitations、ILabelStore 的 XML 註解與 CHANGELOG 一起改,不能順手。
 /// </summary>
 public class CaseSensitivityTests
 {
+    [Fact]
+    public async Task 現行行為_不分大小寫的collation上_以名稱查詢的API仍以Ordinal比對名稱()
+    {
+        using var db = new CaseInsensitiveDb();
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "paper");
+        await db.Store.AttachAsync(note, "Paper");   // 依 collation 是同一個標籤:沿用,不另建
+
+        (await db.Store.GetAllAsync()).Should().ContainSingle().Which.Name.Should().Be("paper");
+        (await db.Store.FindAsync("PAPER"))!.Name.Should().Be("paper", "FindAsync 在資料庫端比對,跟 collation 走");
+        (await db.Store.GetLabelsOfAsync(note)).Should().ContainSingle();
+
+        // 以名稱查詢的四支 API:名稱要跟儲存的寫法完全相同才查得到
+        (await db.Store.FindByLabelAsync("paper")).Should().ContainSingle();
+        (await db.Store.FindByLabelAsync("Paper")).Should().BeEmpty();
+        (await db.Store.FindByLabelsAsync(new[] { "paper", "PAPER" }, LabelMatch.All)).Should().BeEmpty();
+        (await db.Store.FindByLabelsAsync(new[] { "paper", "PAPER" }, LabelMatch.Any)).Should().ContainSingle();
+        (await db.Store.QueryByLabelAsync<TestNote>("paper")).ToList().Should().ContainSingle();
+        (await db.Store.QueryByLabelAsync<TestNote>("Paper")).ToList().Should().BeEmpty();
+        (await db.Store.QueryByLabelsAsync<TestNote>(new[] { "PAPER" })).ToList().Should().BeEmpty();
+    }
+
     [Fact]
     public async Task 名稱保留原始大小寫_不做大小寫正規化()
     {

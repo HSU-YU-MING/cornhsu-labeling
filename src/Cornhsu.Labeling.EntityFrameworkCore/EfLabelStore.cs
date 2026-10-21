@@ -299,7 +299,10 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
     // ---- 內部 ----
 
-    /// <summary>名稱正規化:去前後空白;空白字串視為無效(null)。大小寫不動,交由資料庫 collation 決定。</summary>
+    /// <summary>
+    /// 名稱正規化:去前後空白;空白字串視為無效(null)。大小寫不動。
+    /// 多數 API 拿正規化後的名稱到資料庫比對(依 collation);以名稱查詢的 API 例外,見 <see cref="ResolveLabelIdGroupsAsync"/>。
+    /// </summary>
     private static string? Normalize(string? name)
         => string.IsNullOrWhiteSpace(name) ? null : name!.Trim();
 
@@ -375,6 +378,9 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             .Select(l => new { l.Id, l.ParentId, l.Name })
             .ToListAsync(ct).ConfigureAwait(false);
 
+        // 名稱在記憶體以 Ordinal 比對,不跟資料庫 collation 走(其他 API 在資料庫端比對)。
+        // 這是現行的對外行為,ILabelStore.FindByLabelsAsync 的 XML 與 README Limitations 都寫明了;
+        // 要不要改成跟 collation 走還沒拍板,CaseSensitivityTests 的「現行行為」測試釘著它。
         var byName = all.ToDictionary(l => l.Name, l => l.Id);
         var byParent = all.Where(l => l.ParentId != null).ToLookup(l => l.ParentId!.Value);
 

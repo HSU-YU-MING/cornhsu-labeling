@@ -19,6 +19,12 @@
   父標籤,那些標籤也一起檢查。沿用既有的循環例外與訊息,只多擋下本來就會成環的寫入。
   README 的「`UpdateAsync` 只依 `ParentId` 檢查循環」限制已移除。
 
+### Changed
+- **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**
+  (patch,只改文件)。這四支在記憶體以 Ordinal(區分大小寫)比對名稱,不跟資料庫 collation 走;
+  `FindAsync`、貼標、撕標則在資料庫端比對。在不分大小寫的 collation 上(例如 SQL Server 預設),
+  `FindAsync("Paper")` 找得到的 `paper` 標籤,這四支查不到。以前只有 README 寫,IntelliSense 看不到。行為不變。
+
 ## [1.1.0] — 2026-08-07
 
 **對外語言統一為英文。** 公開 API 的簽名、行為、資料庫 schema 全部不變 —— 這一版只換

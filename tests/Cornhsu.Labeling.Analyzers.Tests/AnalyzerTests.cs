@@ -302,6 +302,21 @@ public class AnalyzerTests
     }
 
     [Fact]
+    public async Task struct與record_struct實作ILabelable_註冊不了_不報()
+    {
+        // Labelable<TEntity> 限定 class:struct 根本無法註冊,報 CHSU001 叫人去註冊只是噪音
+        var diags = await AnalyzeAsync("""
+            using Cornhsu.Labeling;
+
+            public struct Point : ILabelable<int> { public int Id { get; set; } }
+            public record struct Pair(int Id) : ILabelable<int>;
+            public struct Bare : ILabelable { }
+            """);
+
+        diags.Should().BeEmpty("struct 不能交給 Labelable<T>,警告了也沒有辦法照著修");
+    }
+
+    [Fact]
     public async Task 別的型別上同名的Labelable方法_不算註冊()
     {
         var diags = await AnalyzeAsync("""

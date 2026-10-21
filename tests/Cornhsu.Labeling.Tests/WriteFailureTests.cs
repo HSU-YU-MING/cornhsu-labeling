@@ -363,6 +363,132 @@ public class WriteFailureTests
         (await db.Store.GetLabelsOfAsync(note)).Should().ContainSingle().Which.Name.Should().Be("論文");
     }
 
+    // ---- 存檔已經提交、之後才拋例外(例如消費端的 SavedChanges 攔截器):寫進去的就是寫進去了,不能還原 ----
+
+    [Fact]
+    public async Task DeleteAsync提交後才拋例外_不把已刪掉的標籤放回追蹤器()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "論文");
+        var label = (await db.Store.FindAsync("論文"))!;
+
+        after.Armed = true;
+        var act = () => db.Store.DeleteAsync(label.Id);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).Which.Should().BeSameAs(after.Thrown);
+
+        db.Context.Entry(label).State.Should().Be(EntityState.Detached, "刪除已經提交");
+        HasPendingLabelOrLink(db.Context).Should().BeFalse();
+        (await db.Store.FindAsync("論文")).Should().BeNull();
+        await db.Context.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task UpdateAsync提交後才拋例外_已提交的值不會被之後的存檔蓋回去()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var label = await db.Store.CreateAsync("論文");
+
+        after.Armed = true;
+        var act = () => db.Store.UpdateAsync(label.Id, l => l.Color = "#FF0000");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        label.Color.Should().Be("#FF0000");
+        db.Context.ChangeTracker.HasChanges().Should().BeFalse();
+        await db.AddNoteAsync();
+        await db.Store.UpdateAsync(label.Id, l => l.SortOrder = 3);
+        var stored = (await StoredLabelsAsync(db)).Single();
+        stored.Color.Should().Be("#FF0000");
+        stored.SortOrder.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task RenameAsync提交後才拋例外_已提交的名稱不會被之後的存檔蓋回去()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var label = await db.Store.CreateAsync("原名");
+
+        after.Armed = true;
+        var act = () => db.Store.RenameAsync(label.Id, "新名");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        label.Name.Should().Be("新名");
+        await db.AddNoteAsync();
+        (await StoredLabelsAsync(db)).Single().Name.Should().Be("新名");
+    }
+
+    [Fact]
+    public async Task CreateAsync提交後才拋例外_已建立的標籤留在追蹤器()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+
+        after.Armed = true;
+        var act = () => db.Store.CreateAsync("論文");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        var tracked = db.Context.ChangeTracker.Entries<Label>().Should().ContainSingle().Subject;
+        tracked.State.Should().Be(EntityState.Unchanged);
+        (await StoredLabelsAsync(db)).Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task AttachAsync提交後才拋例外_已寫入的連結留在追蹤器_再貼一次照常()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var note = await db.AddNoteAsync();
+        await db.Store.CreateAsync("論文");
+
+        after.Armed = true;
+        var act = () => db.Store.AttachAsync(note, "論文");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        db.Context.ChangeTracker.Entries<LabelLink<TestNote, Guid>>().Should().ContainSingle()
+            .Which.State.Should().Be(EntityState.Unchanged);
+        await db.Store.AttachAsync(note, "論文");
+        (await StoredLinkCountAsync(db)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DetachAsync提交後才拋例外_不把已刪掉的連結放回追蹤器_再撕一次照常()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "論文");
+
+        after.Armed = true;
+        var act = () => db.Store.DetachAsync(note, "論文");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        db.Context.ChangeTracker.Entries<LabelLink<TestNote, Guid>>().Should().BeEmpty("刪除已經提交");
+        await db.Store.DetachAsync(note, "論文");   // 幽靈連結還在的話,這次會撞並發例外
+        (await StoredLinkCountAsync(db)).Should().Be(0);
+    }
+
+    /// <summary>存檔提交之後才拋例外(只拋一次),模擬消費端的 SavedChanges 攔截器(稽核、outbox)出錯。</summary>
+    private sealed class ThrowAfterSave : SaveChangesInterceptor
+    {
+        public bool Armed { get; set; }
+        public Exception? Thrown { get; private set; }
+
+        public override ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (Armed)
+            {
+                Armed = false;
+                Thrown = new InvalidOperationException("模擬提交之後才發生的錯誤");
+                throw Thrown;
+            }
+            return ValueTask.FromResult(result);
+        }
+    }
+
     /// <summary>條件第一次成立的那次存檔失敗(只失敗一次)。</summary>
     private sealed class FailOnce : SaveChangesInterceptor
     {

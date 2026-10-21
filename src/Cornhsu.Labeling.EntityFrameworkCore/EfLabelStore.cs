@@ -139,11 +139,15 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
             label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
             _db.Entry(label).DetectChanges();          // 消費端關掉自動偵測變更時,SaveChanges 不會自己發現正規化後的名稱與新戳記
+            snapshot.ArmForSave();
             await _db.SaveChangesAsync(ct).ConfigureAwait(false);
             return label;
         }
         catch (Exception ex)
         {
+            if (snapshot.SaveAccepted)
+                throw;   // 已經提交,例外來自提交之後的步驟:寫進去的就是寫進去了,不還原
+
             // lambda 可能在上面那次偵測變更之前就失敗(自己拋例外,或改了 Id 被擋下):經導覽屬性做的修改
             // (l.Parent = x、x.Children.Add(l))那時還沒寫回外鍵,還原碰不到,下一次存檔照樣落地。
             // 先把被改掉的主鍵放回去(否則偵測會因主鍵被改而拋),再盡力偵測一次,讓它們變成還原得掉的外鍵值
@@ -484,10 +488,14 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         {
             if (mutate is not null)
                 await mutate().ConfigureAwait(false);
+            undo.ArmForSave();
             await _db.SaveChangesAsync(ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
+            if (undo.SaveAccepted)
+                throw;   // 已經提交,例外來自提交之後的步驟(例如消費端的 SavedChanges 攔截器):不還原
+
             undo.Restore();
             await ReloadConflictsAsync(ex, undo).ConfigureAwait(false);
             throw;
@@ -617,7 +625,9 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         }
         catch
         {
-            _db.Entry(label).State = EntityState.Detached;   // 取消等其他失敗:同樣不留下新增中的標籤
+            // 取消等其他失敗:同樣不留下新增中的標籤。已經不是 Added 就是存檔已提交、例外來自之後的步驟,留著
+            if (_db.Entry(label).State == EntityState.Added)
+                _db.Entry(label).State = EntityState.Detached;
             throw;
         }
     }

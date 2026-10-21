@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace Cornhsu.Labeling.Tests;
@@ -53,7 +54,7 @@ public class UpdateTests
         var label = await db.Store.CreateAsync("論文");
 
         var act = () => db.Store.UpdateAsync(label.Id, l => l.Name = "研究");
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*already taken*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("label name '研究' is already taken.");
     }
 
     [Fact]
@@ -63,7 +64,7 @@ public class UpdateTests
         var label = await db.Store.CreateAsync("論文");
 
         var act = () => db.Store.UpdateAsync(label.Id, l => l.ParentId = label.Id);
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*its own parent*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("label '論文' cannot be its own parent.");
     }
 
     [Fact]
@@ -75,7 +76,7 @@ public class UpdateTests
         var grandchild = await db.Store.CreateAsync("摘要筆記", parentId: child.Id);
 
         var act = () => db.Store.UpdateAsync(root.Id, l => l.ParentId = grandchild.Id);
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*cycle*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("label '論文' cannot be moved under one of its own descendants (that would form a cycle).");
     }
 
     [Fact]
@@ -89,5 +90,124 @@ public class UpdateTests
         await db.Store.UpdateAsync(child.Id, l => l.ParentId = b.Id);
 
         (await db.Store.FindAsync("child"))!.ParentId.Should().Be(b.Id);
+    }
+
+    [Fact]
+    public async Task 移回頂層_ParentId設為null()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("論文");
+        var child = await db.Store.CreateAsync("文獻回顧", parentId: parent.Id);
+
+        await db.Store.UpdateAsync(child.Id, l => l.ParentId = null);
+
+        using var other = db.CreateSecondContext();
+        (await other.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == child.Id)).ParentId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task 透過Update改名_去除前後空白_連結不受影響()
+    {
+        using var db = new TestDb();
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "論文");
+        var label = (await db.Store.FindAsync("論文"))!;
+
+        var updated = await db.Store.UpdateAsync(label.Id, l => l.Name = "  研究  ");
+
+        updated.Name.Should().Be("研究");
+        using var other = db.CreateSecondContext();
+        (await other.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == label.Id)).Name.Should().Be("研究");
+        (await db.Store.GetLabelsOfAsync(note)).Should().ContainSingle().Which.Name.Should().Be("研究");
+    }
+
+    [Fact]
+    public async Task 回傳值是更新後的同一個標籤_戳記已輪換()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文");
+        var stampBefore = label.ConcurrencyStamp;
+
+        var updated = await db.Store.UpdateAsync(label.Id, l => l.Color = "#FF5722");
+
+        updated.Id.Should().Be(label.Id);
+        updated.Color.Should().Be("#FF5722");
+        updated.ConcurrencyStamp.Should().NotBe(stampBefore);
+    }
+
+    [Fact]
+    public async Task update為null_拋出ArgumentNullException_ParamName為update()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文");
+
+        var act = () => db.Store.UpdateAsync(label.Id, null!);
+
+        (await act.Should().ThrowAsync<ArgumentNullException>()).Which.ParamName.Should().Be("update");
+    }
+
+    [Fact]
+    public async Task 標籤不存在_拋出帶Id的例外_且不執行update()
+    {
+        using var db = new TestDb();
+        var missing = Guid.NewGuid();
+        var called = false;
+
+        var act = () => db.Store.UpdateAsync(missing, _ => called = true);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage($"label {missing} not found.");
+        called.Should().BeFalse("找不到標籤就沒有東西可以交給 update");
+    }
+
+    [Fact]
+    public async Task 在update裡改Id_拋例外()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文");
+
+        var act = () => db.Store.UpdateAsync(label.Id, l => l.Id = Guid.NewGuid());
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("a label's Id must not be changed inside UpdateAsync.");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task 透過Update改成空白名稱_拋出ArgumentException_ParamName為update(string? name)
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文");
+
+        var act = () => db.Store.UpdateAsync(label.Id, l => l.Name = name!);
+
+        (await act.Should().ThrowAsync<ArgumentException>()).Which.ParamName.Should().Be("update");
+        using var other = db.CreateSecondContext();
+        (await other.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == label.Id)).Name.Should().Be("論文");
+    }
+
+    [Fact]
+    public async Task 透過Update改成超過上限的名稱_拋出ArgumentException()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文");
+
+        var act = () => db.Store.UpdateAsync(label.Id, l => l.Name = new string('長', Label.MaxNameLength + 1));
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage($"label name is {Label.MaxNameLength + 1} characters, over the {Label.MaxNameLength} limit: '{new string('長', 16)}…'");
+    }
+
+    [Fact]
+    public async Task 透過Update把父標籤指到不存在的Id_拋例外()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文");
+        var missing = Guid.NewGuid();
+
+        var act = () => db.Store.UpdateAsync(label.Id, l => l.ParentId = missing);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage($"parent label {missing} does not exist.");
     }
 }

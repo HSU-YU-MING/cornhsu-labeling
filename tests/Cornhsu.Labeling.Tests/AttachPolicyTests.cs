@@ -37,7 +37,9 @@ public class AttachPolicyTests
         var act = () => db.Store.AttachAsync(note, "論文", "急件", "沒這個");
 
         (await act.Should().ThrowAsync<InvalidOperationException>())
-            .WithMessage("*'急件'*'沒這個'*AutoCreateLabels*CreateAsync*");
+            .WithMessage("label(s) '急件', '沒這個' do not exist and AutoCreateLabels is disabled. " +
+                         "Create them with CreateAsync first (optionally with a color and icon), " +
+                         "or set LabelRegistry.AutoCreateLabels back to true.");
 
         // 不留任何副作用:沒建立標籤、也沒貼上任何連結
         (await db.Store.GetAllAsync()).Should().ContainSingle().Which.Name.Should().Be("論文");

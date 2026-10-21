@@ -1,6 +1,6 @@
 # Changelog
 
-## [未發佈]
+## [Unreleased]
 
 **產品 bug 修正。** 公開 API 的簽章、資料庫 schema、相依樓地板都沒有變。
 每一條後面標了它單獨算的 semver;整版取最高的那一條:**minor**——`CHSU001` 對巢狀與泛型型別的訊息文字,

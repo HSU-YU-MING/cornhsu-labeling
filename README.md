@@ -20,8 +20,8 @@ validated on the production data of a real product ([QuillNest](https://cornhsu.
 flowchart LR
     subgraph app["Your application"]
         direction TB
-        note["Note : ILabelable&lt;int&gt;"]
-        memo["Memo : ILabelable&lt;Guid&gt;"]
+        note["Note : ILabelable&lt;Guid&gt;"]
+        todo["TodoItem : ILabelable&lt;int&gt;"]
         reg["LabelRegistry<br/>r.Labelable&lt;T&gt;()<br/>key type inferred automatically"]
     end
 
@@ -35,12 +35,12 @@ flowchart LR
         direction TB
         label[("Label<br/>unique name · hierarchy · concurrency stamp")]
         link1[("LabelLink_Note<br/>real FK · cascade")]
-        link2[("LabelLink_Memo<br/>real FK · cascade")]
+        link2[("LabelLink_TodoItem<br/>real FK · cascade")]
     end
 
     note -.->|"compile-time check"| analyzer
     note --> reg
-    memo --> reg
+    todo --> reg
     reg -->|"ApplyLabelModel<br/>generates one link table per type"| db
     app -->|"attach / query"| store
     store --> label
@@ -173,7 +173,7 @@ Labels can also be created up front, organized into a hierarchy, and maintained 
 var work   = await store.CreateAsync("work", color: "#FF5722", icon: "briefcase");
 var review = await store.CreateAsync("review", parentId: work.Id);   // a child of "work"
 await store.RenameAsync(review.Id, "peer review");          // links store the Id, so they are untouched
-await store.UpdateAsync(work.Id, l => l.SortOrder = 1);     // any field but Id; a new parent is checked for cycles
+await store.UpdateAsync(work.Id, l => l.SortOrder = 1);     // any field but Id; a new ParentId is checked for cycles
 var found  = await store.FindAsync("work");                 // null when there is no such label
 var labels = await store.GetAllAsync();                     // ordered by SortOrder, then Name
 
@@ -340,8 +340,9 @@ The package ships an analyzer — installing it is all it takes. Two rules:
 Full details, examples and fixes: [docs/analyzer-rules.md](docs/analyzer-rules.md).
 
 `CHSU001` is a false positive when the registration lives in another assembly, goes through a
-generic helper (`r.Labelable<T>()` where `T` is a type parameter), or registers a generic entity
-by a closed type (`r.Labelable<Box<string>>()` for `class Box<T> : ILabelable<int>`) — silence it with
+generic helper (`r.Labelable<T>()` where `T` is a type parameter), or registers a type that carries
+type arguments: a generic entity (`r.Labelable<Box<string>>()` for `class Box<T> : ILabelable<int>`)
+or an entity nested inside a generic class (`r.Labelable<Outer<int>.Note>()`). Silence it with
 `#pragma warning disable CHSU001` around the type, or an `.editorconfig` entry for the file that
 declares it (`.editorconfig` severities apply per file, not per type).
 
@@ -388,12 +389,24 @@ with network latency the difference is 49 round trips.
   (`"Life/Misc"`), which is v2 territory.
 - **Label names are trimmed of surrounding whitespace** (consistently, at every entry point).
   Case sensitivity is left to the database collation (SQLite is case-sensitive by default,
-  SQL Server is not), with one exception: the name-based queries (`FindByLabelAsync`,
-  `FindByLabelsAsync`, `QueryByLabelAsync`, `QueryByLabelsAsync`) match names with an ordinal,
-  case-sensitive comparison regardless of collation. On a case-insensitive collation,
-  `AttachAsync(note, "Paper")` reuses an existing `paper` label and `FindAsync("Paper")` finds it,
-  but `FindByLabelAsync("Paper")` returns nothing. Pass these queries the name exactly as stored
-  (`FindAsync` follows the collation and returns the label with its stored spelling).
+  SQL Server is not), with two exceptions:
+  - The name-based queries (`FindByLabelAsync`, `FindByLabelsAsync`, `QueryByLabelAsync`,
+    `QueryByLabelsAsync`) match names with an ordinal, case-sensitive comparison regardless of
+    collation. On a case-insensitive collation, `AttachAsync(note, "Paper")` reuses an existing
+    `paper` label and `FindAsync("Paper")` finds it, but `FindByLabelAsync("Paper")` returns
+    nothing. Pass these queries the name exactly as stored (`FindAsync` follows the collation and
+    returns the label with its stored spelling).
+  - `GetLabelsOfManyAsync` sorts names with the same ordinal comparison, while `GetLabelsOfAsync`
+    and `GetAllAsync` leave the sorting to the database. On a case-insensitive collation, labels
+    with the same `SortOrder` can therefore come back in a different order: `GetLabelsOfManyAsync`
+    puts `B` before `a`, where `GetLabelsOfAsync` puts `a` before `B`.
+- **When no label matches, `QueryByLabelAsync` and `QueryByLabelsAsync` return an in-memory empty
+  `IQueryable`, not an EF Core query.** That happens when none of the names exists, or, with
+  `LabelMatch.All`, when any one of them is missing — a new database with no labels yet is the
+  usual case. EF Core's async operators (`ToListAsync`, `CountAsync`, …) throw
+  `InvalidOperationException` on that result. Check `query is IAsyncEnumerable<Note>` first and
+  treat `false` as an empty result, or use the synchronous operators (`ToList()`, `Count()`),
+  which work on both.
 - **Get-or-create has a race**: two paths creating the same name concurrently will collide on the
   unique index, which is handled by re-reading and adopting the existing label. If the re-read
   shows it was not a same-name race, the original exception propagates.
@@ -402,9 +415,13 @@ with network latency the difference is 49 round trips.
   is identical across providers. When two callers modify the same label, the one that saves second
   gets a `DbUpdateConcurrencyException` instead of silently overwriting — catch it, then re-read
   and retry or prompt the user.
+- **`UpdateAsync` checks for cycles on `ParentId` only.** To move a label, set `ParentId` inside
+  the lambda. Assigning the `Parent` navigation, or adding the label to another label's
+  `Children`, skips the check: EF Core copies a navigation into `ParentId` only when it saves,
+  after the check has run, so a cycle can reach the database.
 - **Tested against SQLite, SQL Server and PostgreSQL** (the same test suite, on every CI run, with
   EF Core 8; the EF Core 9 and 10 runs use SQLite only). Note that name case semantics vary with
-  collation, except for the name-based queries, as described above.
+  collation, apart from the exceptions described above.
 - **`ILabelStore`'s write methods call your DbContext's `SaveChangesAsync`** — any other pending
   changes in that same context get committed along with them. That is the inherent trade-off of
   sharing a DbContext with the application; if you need isolation, call the store from a separate

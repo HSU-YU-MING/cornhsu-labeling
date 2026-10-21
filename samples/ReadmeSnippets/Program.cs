@@ -79,6 +79,7 @@ var todoIds = all
 // 只驗 README 明講的事;行為的完整驗證在 tests/,不要在這裡長成第二套測試。
 Check(all.Count == 2, "FindByLabelAsync 跨型別:Note 與 TodoItem 都在結果裡");
 Check(await notes.CountAsync() == 1, "QueryByLabelAsync<Note> 是可以繼續組合的 IQueryable");
+Check(notes is IAsyncEnumerable<Note>, "有命中時是 EF 查詢:README Limitations 教的 is IAsyncEnumerable<T> 才分得出空結果");
 Check(urgent.Count == 1 && await either.CountAsync() == 1, "LabelMatch.All / Any 都吃得到");
 Check(labelsByNote.Count == visibleNotes.Count, "GetLabelsOfManyAsync:每個 entity 都有一格");
 Check(todoIds.Single() == todo.Id, "EntityIdAs<int>() 拿得到 TodoItem 的 int 主鍵");
@@ -99,7 +100,7 @@ var work   = await store.CreateAsync("work", color: "#FF5722", icon: "briefcase"
 var review = await store.CreateAsync("review", parentId: work.Id);   // a child of "work"
 await store.AttachAsync(note, "review");                    // README 沒有這行:讓下面的「含子孫」真的找得到東西
 await store.RenameAsync(review.Id, "peer review");          // links store the Id, so they are untouched
-await store.UpdateAsync(work.Id, l => l.SortOrder = 1);     // any field but Id; a new parent is checked for cycles
+await store.UpdateAsync(work.Id, l => l.SortOrder = 1);     // any field but Id; a new ParentId is checked for cycles
 var found  = await store.FindAsync("work");                 // null when there is no such label
 var labels = await store.GetAllAsync();                     // ordered by SortOrder, then Name
 

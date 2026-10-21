@@ -19,8 +19,8 @@
 flowchart LR
     subgraph app["你的應用程式"]
         direction TB
-        note["Note : ILabelable&lt;int&gt;"]
-        memo["Memo : ILabelable&lt;Guid&gt;"]
+        note["Note : ILabelable&lt;Guid&gt;"]
+        todo["TodoItem : ILabelable&lt;int&gt;"]
         reg["LabelRegistry<br/>r.Labelable&lt;T&gt;()<br/>主鍵型別自動推斷"]
     end
 
@@ -34,12 +34,12 @@ flowchart LR
         direction TB
         label[("Label<br/>名稱唯一・階層・並發戳記")]
         link1[("LabelLink_Note<br/>真外鍵・cascade")]
-        link2[("LabelLink_Memo<br/>真外鍵・cascade")]
+        link2[("LabelLink_TodoItem<br/>真外鍵・cascade")]
     end
 
     note -.->|"編譯期檢查"| analyzer
     note --> reg
-    memo --> reg
+    todo --> reg
     reg -->|"ApplyLabelModel<br/>每型別自動生成連結表"| db
     app -->|"貼標/查詢"| store
     store --> label
@@ -165,7 +165,7 @@ var todoIds = all
 var work   = await store.CreateAsync("工作", color: "#FF5722", icon: "briefcase");
 var review = await store.CreateAsync("審稿", parentId: work.Id);    // 「工作」的子標籤
 await store.RenameAsync(review.Id, "同儕審稿");             // 連結存的是 Id,不受影響
-await store.UpdateAsync(work.Id, l => l.SortOrder = 1);     // Id 以外的欄位都能改;換父標籤會檢查循環
+await store.UpdateAsync(work.Id, l => l.SortOrder = 1);     // Id 以外的欄位都能改;改 ParentId 會檢查循環
 var found  = await store.FindAsync("工作");                 // 沒有這個標籤時回傳 null
 var labels = await store.GetAllAsync();                     // 依 SortOrder、再依 Name 排序
 
@@ -321,7 +321,8 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 完整說明、範例與修法:[docs/analyzer-rules.md](docs/analyzer-rules.md)。
 
 註冊發生在其他組件、透過泛型 helper 註冊(`r.Labelable<T>()` 的 `T` 是型別參數)、
-或泛型實體以封閉型別註冊(`class Box<T> : ILabelable<int>` 以 `r.Labelable<Box<string>>()` 註冊)時,
+或註冊的型別帶有型別引數(泛型實體 `class Box<T> : ILabelable<int>` 以 `r.Labelable<Box<string>>()` 註冊,
+或泛型類別裡的巢狀實體以 `r.Labelable<Outer<int>.Note>()` 註冊)時,
 `CHSU001` 會誤報,請在該型別周圍用 `#pragma warning disable CHSU001`,
 或在 .editorconfig 針對宣告它的檔案靜音(.editorconfig 的嚴重度以檔案為單位,無法指定型別)。
 
@@ -356,14 +357,25 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
   需要這種結構時,請把限定詞放進名稱本身(如「生活·雜項」)。
   未來若支援每父層唯一,勢必伴隨路徑定址(`"生活/雜項"`)的 API 改版,屬 v2 範疇。
 - **標籤名稱會自動去除前後空白**(所有輸入入口一致);大小寫語意交由資料庫 collation 決定(SQLite 預設區分大小寫、SQL Server 預設不區分),
-  但有一個例外:以名稱查詢的 API(`FindByLabelAsync`、`FindByLabelsAsync`、`QueryByLabelAsync`、`QueryByLabelsAsync`)
-  比對名稱時一律區分大小寫(Ordinal),不跟資料庫 collation 走。在不區分大小寫的 collation 上,
-  `AttachAsync(note, "Paper")` 會沿用既有的 `paper` 標籤、`FindAsync("Paper")` 也找得到它,
-  `FindByLabelAsync("Paper")` 卻什麼都查不到。呼叫這幾支查詢時,請傳入與儲存值完全相同的名稱
-  (`FindAsync` 依 collation 比對,回傳的標籤帶著儲存時的寫法)。
+  但有兩個例外:
+  - 以名稱查詢的 API(`FindByLabelAsync`、`FindByLabelsAsync`、`QueryByLabelAsync`、`QueryByLabelsAsync`)
+    比對名稱時一律區分大小寫(Ordinal),不跟資料庫 collation 走。在不區分大小寫的 collation 上,
+    `AttachAsync(note, "Paper")` 會沿用既有的 `paper` 標籤、`FindAsync("Paper")` 也找得到它,
+    `FindByLabelAsync("Paper")` 卻什麼都查不到。呼叫這幾支查詢時,請傳入與儲存值完全相同的名稱
+    (`FindAsync` 依 collation 比對,回傳的標籤帶著儲存時的寫法)。
+  - `GetLabelsOfManyAsync` 也用同樣的 Ordinal 比較排序名稱,`GetLabelsOfAsync` 與 `GetAllAsync` 則交給資料庫排序。
+    在不區分大小寫的 collation 上,`SortOrder` 相同的標籤因此可能順序不同:
+    `GetLabelsOfManyAsync` 把 `B` 排在 `a` 前面,`GetLabelsOfAsync` 則是 `a` 在 `B` 前面。
+- **名稱一個都對不上時,`QueryByLabelAsync` 與 `QueryByLabelsAsync` 回傳的是記憶體裡的空 `IQueryable`,不是 EF Core 查詢。**
+  情境是名稱全都不存在,或在 `LabelMatch.All` 下任一名稱不存在——最常見的是還沒有任何標籤的新資料庫。
+  對這個結果呼叫 EF Core 的非同步運算子(`ToListAsync`、`CountAsync`…)會拋 `InvalidOperationException`。
+  請先判斷 `query is IAsyncEnumerable<Note>`,`false` 就當成空結果;或改用同步運算子(`ToList()`、`Count()`),兩種結果都能用。
 - **get-or-create 標籤有競態**:兩條路徑同時建同名標籤會撞 unique index,以「重讀驗證後採用既有標籤」處理;若重讀發現不是同名競態,原例外照拋。
 - **並發修改保護**:`Label.ConcurrencyStamp` 是並發戳記(每次透過 store 修改就輪換,不依賴資料庫功能,所有 provider 行為一致)。兩邊同時修改同一個標籤時,後存檔的一方會得到 `DbUpdateConcurrencyException` 而不是默默蓋掉對方——請接住這個例外,重讀後重試或提示使用者。
-- **測試涵蓋 SQLite、SQL Server、PostgreSQL** 三個 provider(同一套測試,CI 每次都跑,EF Core 8;EF Core 9 / 10 那兩條只跑 SQLite)。注意名稱大小寫語意隨 collation 而異:SQLite 預設區分大小寫、SQL Server 預設不區分(以名稱查詢的 API 例外,見上)。
+- **`UpdateAsync` 只依 `ParentId` 檢查循環。** 要換父標籤,請在 lambda 裡設定 `ParentId`。
+  改用 `Parent` 導覽屬性指派、或把標籤加進另一個標籤的 `Children`,會跳過這項檢查:
+  EF Core 要到存檔時才把導覽屬性寫回 `ParentId`,那時檢查已經做完,循環就會直接寫進資料庫。
+- **測試涵蓋 SQLite、SQL Server、PostgreSQL** 三個 provider(同一套測試,CI 每次都跑,EF Core 8;EF Core 9 / 10 那兩條只跑 SQLite)。注意名稱大小寫語意隨 collation 而異:SQLite 預設區分大小寫、SQL Server 預設不區分(例外見上)。
 - **`ILabelStore` 的寫入方法會呼叫你的 DbContext 的 `SaveChangesAsync`**——如果同一個 context 裡有其他未存檔的變更,會被一起送出。這是「與應用共用 DbContext」模式的固有取捨;若要隔離,請用獨立的 DbContext scope 呼叫 store。
 - **只支援 EF Core 8+**。相依樓地板是 8.0.11(8.0 系列中已修補已知弱點通報的版本),消費端用 EF Core 9/10 會自動 unify。
 - 測試請用 **SQLite in-memory,不要用 EF InMemory Provider**——後者不執行外鍵約束,測不到本套件的核心保證。

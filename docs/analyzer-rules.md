@@ -43,9 +43,13 @@ type directly. The warning is a false positive when:
 - the registration goes through a generic helper such as
   `static void Reg<T>(LabelRegistry r) where T : class, ILabelable => r.Labelable<T>()` (the analyzer
   cannot tell which types reach `T`);
-- a generic entity is registered by a closed type: declaring `class Box<T> : ILabelable<int>` and
-  registering `r.Labelable<Box<string>>()` still reports `Type 'Box'`, because the analyzer compares
-  the registered `Box<string>` with the declared `Box<T>`.
+- the registered type carries type arguments, because the entity is generic or is nested inside a
+  generic class. Declaring `class Box<T> : ILabelable<int>` and registering `r.Labelable<Box<string>>()`
+  still reports `Type 'Box'`; declaring `Note : ILabelable<int>` inside `class Outer<T>` and
+  registering `r.Labelable<Outer<int>.Note>()` still reports `Type 'Note'`. The analyzer compares the
+  registered type (`Box<string>`, `Outer<int>.Note`) with the declared one (`Box<T>`, `Outer<T>.Note`),
+  and they never match. The registration the message suggests (`r.Labelable<Box>()`,
+  `r.Labelable<Note>()`) does not compile for these types.
 
 Suppress it with `#pragma warning disable CHSU001` around the type, a
 `[SuppressMessage("Cornhsu.Labeling", "CHSU001")]` attribute on it, or a `.editorconfig` entry.

@@ -84,28 +84,63 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var label = await _db.Set<Label>().FindAsync(new object[] { labelId }, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"label {labelId} not found.");
 
-        var originalName = label.Name;
-        update(label);
-
-        if (label.Id != labelId)
-            throw new InvalidOperationException("a label's Id must not be changed inside UpdateAsync.");
-
-        // 改名走與 RenameAsync 相同的規則(正規化 + 唯一性)
-        if (!string.Equals(label.Name, originalName, StringComparison.Ordinal))
+        // lambda 改的是追蹤中的實體,還可能經導覽屬性動到別的標籤。先記下追蹤器裡每個標籤呼叫前的樣子,
+        // 驗證或存檔失敗時整批還原——否則被擋下的值會留在追蹤器,在下一次 SaveChanges 落地。
+        DetectLabelChanges();
+        var snapshot = new TrackerSnapshot(_db);
+        var parentsBefore = new Dictionary<Label, Guid?>(ReferenceEqualityComparer.Instance);
+        foreach (var entry in _db.ChangeTracker.Entries<Label>())
         {
-            var normalized = Normalize(label.Name)
-                ?? throw new ArgumentException("label name must not be blank.", nameof(update));
-            ValidateNameLength(normalized);
-            var taken = await _db.Set<Label>().AnyAsync(l => l.Name == normalized && l.Id != labelId, ct).ConfigureAwait(false);
-            if (taken)
-                throw new InvalidOperationException($"label name '{normalized}' is already taken.");
-            label.Name = normalized;
+            snapshot.Capture(entry);
+            parentsBefore[entry.Entity] = entry.Entity.ParentId;
         }
 
-        await EnsureNoCycleAsync(label, ct).ConfigureAwait(false);
-        label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
-        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
-        return label;
+        // 名稱要不要驗證,比的是資料庫裡的名稱:存檔會寫入的名稱只要跟它不同就要驗
+        var storedName = _db.Entry(label).Property(l => l.Name).OriginalValue;
+
+        try
+        {
+            update(label);
+
+            if (label.Id != labelId)
+            {
+                label.Id = labelId;   // 先放回主鍵,下面還原時偵測變更才不會因為主鍵被改而拋 EF 自己的例外
+                throw new InvalidOperationException("a label's Id must not be changed inside UpdateAsync.");
+            }
+
+            // 導覽屬性(Parent、Children)的變更要等偵測變更才會寫回 ParentId;不先做,循環檢查看到的是舊值
+            DetectLabelChanges();
+
+            // 改名走與 RenameAsync 相同的規則(正規化 + 唯一性)
+            if (!string.Equals(label.Name, storedName, StringComparison.Ordinal))
+            {
+                var normalized = Normalize(label.Name)
+                    ?? throw new ArgumentException("label name must not be blank.", nameof(update));
+                ValidateNameLength(normalized);
+                var taken = await _db.Set<Label>().AnyAsync(l => l.Name == normalized && l.Id != labelId, ct).ConfigureAwait(false);
+                if (taken)
+                    throw new InvalidOperationException($"label name '{normalized}' is already taken.");
+                label.Name = normalized;
+            }
+
+            // 要檢查的:這個標籤本身(有父標籤時),以及 lambda 換了父標籤的每一個標籤
+            var moved = _db.ChangeTracker.Entries<Label>()
+                .Select(e => e.Entity)
+                .Where(l => ReferenceEquals(l, label)
+                    || !parentsBefore.TryGetValue(l, out var before)
+                    || before != l.ParentId)
+                .ToList();
+            await EnsureNoCycleAsync(moved, ct).ConfigureAwait(false);
+
+            label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
+            await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+            return label;
+        }
+        catch
+        {
+            snapshot.Restore(detachUncapturedOf: typeof(Label));
+            throw;
+        }
     }
 
     public async Task DeleteAsync(Guid labelId, CancellationToken ct = default)
@@ -271,29 +306,56 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     private static List<string> NormalizeMany(IEnumerable<string> names)
         => names.Select(Normalize).Where(n => n is not null).Distinct().Select(n => n!).ToList();
 
-    /// <summary>變更父標籤時的循環檢查:沿新父標籤的祖先鏈往上走,不可繞回自己。</summary>
-    private async Task EnsureNoCycleAsync(Label label, CancellationToken ct)
+    /// <summary>
+    /// 偵測追蹤器裡每個標籤的變更:導覽屬性(Parent、Children)要偵測過才會寫回 ParentId。
+    /// 只掃標籤——消費端關掉自動偵測時,不替他偵測其他實體(那會改變哪些未存變更跟著送出)。
+    /// </summary>
+    private void DetectLabelChanges()
     {
-        if (label.ParentId is null) return;
-        if (label.ParentId == label.Id)
-            throw new InvalidOperationException($"label '{label.Name}' cannot be its own parent.");
+        foreach (var entry in _db.ChangeTracker.Entries<Label>().ToList())
+            entry.DetectChanges();
+    }
+
+    /// <summary>
+    /// 變更父標籤時的循環檢查:對每個有父標籤的標籤,沿父標籤的祖先鏈往上走,不可繞回自己。
+    /// 祖先鏈以資料庫的階層為底,疊上追蹤器裡還沒存檔的 ParentId:同一次 SaveChanges 會把它們一起送出,
+    /// 要檢查的是存檔之後的階層,不是資料庫現在的階層。
+    /// </summary>
+    private async Task EnsureNoCycleAsync(IReadOnlyCollection<Label> labels, CancellationToken ct)
+    {
+        var toCheck = labels.Where(l => l.ParentId is not null).ToList();
+        if (toCheck.Count == 0) return;
+        foreach (var label in toCheck)
+        {
+            if (label.ParentId == label.Id)
+                throw new InvalidOperationException($"label '{label.Name}' cannot be its own parent.");
+        }
 
         var all = await _db.Set<Label>().AsNoTracking()
             .Select(l => new { l.Id, l.ParentId })
             .ToListAsync(ct).ConfigureAwait(false);
         var parentOf = all.ToDictionary(x => x.Id, x => x.ParentId);
-
-        var current = label.ParentId;
-        var hops = 0;
-        while (current is not null)
+        foreach (var entry in _db.ChangeTracker.Entries<Label>())
         {
-            if (current == label.Id)
-                throw new InvalidOperationException(
-                    $"label '{label.Name}' cannot be moved under one of its own descendants (that would form a cycle).");
-            if (!parentOf.TryGetValue(current.Value, out var next))
-                throw new InvalidOperationException($"parent label {current} does not exist.");
-            current = next;
-            if (++hops > parentOf.Count) break;   // 資料已異常成環時的防呆,交給上面的檢查擋
+            if (entry.State == EntityState.Added
+                || (entry.State == EntityState.Modified && entry.Property(l => l.ParentId).IsModified))
+                parentOf[entry.Entity.Id] = entry.Entity.ParentId;
+        }
+
+        foreach (var label in toCheck)
+        {
+            var current = label.ParentId;
+            var hops = 0;
+            while (current is not null)
+            {
+                if (current == label.Id)
+                    throw new InvalidOperationException(
+                        $"label '{label.Name}' cannot be moved under one of its own descendants (that would form a cycle).");
+                if (!parentOf.TryGetValue(current.Value, out var next))
+                    throw new InvalidOperationException($"parent label {current} does not exist.");
+                current = next;
+                if (++hops > parentOf.Count) break;   // 資料已異常成環時的防呆,交給上面的檢查擋
+            }
         }
     }
 

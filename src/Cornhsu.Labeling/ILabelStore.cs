@@ -31,7 +31,10 @@ public interface ILabelStore
     /// <summary>
     /// Updates a label's fields (color, sort order, parent — and the name too, following the same
     /// rules as <see cref="RenameAsync"/>). Changes made to the Label inside <paramref name="update"/>
-    /// are persisted; changing the parent is checked for cycles.
+    /// are persisted; changing the parent — through <see cref="Label.ParentId"/> or through the
+    /// <see cref="Label.Parent"/> / <see cref="Label.Children"/> navigations — is checked for cycles.
+    /// If the update is rejected or cannot be saved, the changes made inside <paramref name="update"/>
+    /// are rolled back, so a later save of the same context does not persist them.
     /// </summary>
     /// <param name="labelId">Label id.</param>
     /// <param name="update">The mutation to apply, e.g. <c>l =&gt; l.Color = "#FF5722"</c>.</param>

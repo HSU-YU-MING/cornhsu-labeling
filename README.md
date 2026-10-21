@@ -415,10 +415,6 @@ with network latency the difference is 49 round trips.
   is identical across providers. When two callers modify the same label, the one that saves second
   gets a `DbUpdateConcurrencyException` instead of silently overwriting — catch it, then re-read
   and retry or prompt the user.
-- **`UpdateAsync` checks for cycles on `ParentId` only.** To move a label, set `ParentId` inside
-  the lambda. Assigning the `Parent` navigation, or adding the label to another label's
-  `Children`, skips the check: EF Core copies a navigation into `ParentId` only when it saves,
-  after the check has run, so a cycle can reach the database.
 - **Tested against SQLite, SQL Server and PostgreSQL** (the same test suite, on every CI run, with
   EF Core 8; the EF Core 9 and 10 runs use SQLite only). Note that name case semantics vary with
   collation, apart from the exceptions described above.

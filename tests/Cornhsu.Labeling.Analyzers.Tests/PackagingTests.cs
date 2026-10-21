@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Xml.Linq;
 using FluentAssertions;
 using Xunit;
@@ -44,7 +46,21 @@ public class PackagingTests
 
         var dll = Path.GetFullPath(Path.Combine(new[] { coreDir }.Concat(segments).ToArray()));
         File.Exists(dll).Should().BeTrue($"打包時會去拿 {dll},那裡要有這次建置出來的 analyzer");
-        AssemblyName.GetAssemblyName(dll).Name.Should().Be(typeof(LabelableRegistrationAnalyzer).Assembly.GetName().Name);
+        var built = typeof(LabelableRegistrationAnalyzer).Assembly;
+        AssemblyName.GetAssemblyName(dll).Name.Should().Be(built.GetName().Name);
+
+        // 只看「檔案在、名稱對」擋不住舊產物:analyzer 的輸出位置搬走之後,那個路徑上
+        // 若還留著上一次建置的 dll,本機的 pack 會默默打包它。MVID 由編譯輸入決定
+        // (deterministic 建置下輸入完全相同才會相同),拿它對照本測試實際載入的那顆。
+        ReadMvid(dll).Should().Be(built.ManifestModule.ModuleVersionId,
+            $"{dll} 必須是這次建置的 analyzer;不一致代表輸出位置已經改了,那個路徑上留的是舊產物");
+    }
+
+    private static Guid ReadMvid(string path)
+    {
+        using var pe = new PEReader(File.OpenRead(path));
+        var metadata = pe.GetMetadataReader();
+        return metadata.GetGuid(metadata.GetModuleDefinition().Mvid);
     }
 
     [Fact]
@@ -53,13 +69,20 @@ public class PackagingTests
         // CLAUDE.md 教訓(commit 3b285d0):版本的真相源是 git tag,release.yml 以 -p:Version= 覆寫。
         // 留空會退回 MSBuild 預設的 1.0.0,寫死真版本號又一定會跟 tag 漂開——
         // 兩種都是「看起來合理」的錯,從原始碼建置的組件會自稱舊版而沒有人懷疑。
-        XDocument.Load(Path.Combine(RepoRoot, "Directory.Build.props"))
-            .Descendants("Version").Select(e => e.Value)
+        var props = XDocument.Load(Path.Combine(RepoRoot, "Directory.Build.props"));
+        props.Descendants("Version").Select(e => e.Value)
             .Should().Equal(new[] { "0.0.0-dev" }, "錯得明顯勝過錯得像真的");
+
+        // -p:Version= 只蓋得掉 Version。無條件寫死的 PackageVersion 不會跟著換,
+        // nupkg 的版本就會和 tag 漂開;VersionPrefix/VersionSuffix 則是同一個欄位的另一種寫法。
+        props.Descendants().Where(e => IsOtherVersionField(e.Name.LocalName))
+            .Should().BeEmpty("Directory.Build.props 只該有 <Version>0.0.0-dev</Version> 這一格");
 
         foreach (var project in Directory.GetFiles(Path.Combine(RepoRoot, "src"), "*.csproj", SearchOption.AllDirectories))
             XDocument.Load(project).Descendants()
-                .Where(e => e.Name.LocalName is "Version" or "VersionPrefix" or "PackageVersion")
+                .Where(e => e.Name.LocalName == "Version" || IsOtherVersionField(e.Name.LocalName))
                 .Should().BeEmpty($"{Path.GetFileName(project)} 不該另外覆寫版本");
+
+        static bool IsOtherVersionField(string name) => name is "VersionPrefix" or "VersionSuffix" or "PackageVersion";
     }
 }

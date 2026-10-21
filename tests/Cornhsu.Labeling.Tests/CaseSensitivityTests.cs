@@ -7,6 +7,9 @@ namespace Cornhsu.Labeling.Tests;
 /// <summary>
 /// 名稱大小寫:套件只去前後空白、不動大小寫,比對交給資料庫 collation(README Limitations 明文:
 /// SQLite 預設區分大小寫,SQL Server 預設不區分)。同一套測試在三個 provider 上都要成立。
+/// 例外是以名稱查詢的 FindByLabel(s)Async / QueryByLabel(s)Async:它們在記憶體以 Ordinal 比對名稱,
+/// 不跟 collation 走(README Limitations、docs/公開介面盤點.md §1.2 #16 與 §7.4)。那是已回報的產品行為,
+/// 所以不區分大小寫的分支刻意不呼叫它們,免得把它釘成規格;區分大小寫的分支裡 Ordinal 與 collation 一致,可以照常驗。
 /// </summary>
 public class CaseSensitivityTests
 {
@@ -32,6 +35,7 @@ public class CaseSensitivityTests
         var note = await db.AddNoteAsync();
 
         // 以資料庫自己的字串比較當基準,不寫死 provider:這正是 README 承諾的「交給 collation」
+        // (以名稱查詢的四支 API 例外,見類別註解)
         var collationIgnoresCase = await db.Context.Set<Label>().AsNoTracking().AnyAsync(l => l.Name == "paper");
 
         if (collationIgnoresCase)

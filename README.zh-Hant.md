@@ -10,7 +10,7 @@
 
 給 EF Core 的多型標籤系統。**同一個標籤,貼在任何型別上**——而且每條連結都有真外鍵。
 
-測試涵蓋 SQLite / SQL Server / PostgreSQL × EF Core 8 / 9 / 10;
+測試涵蓋 SQLite / SQL Server / PostgreSQL × EF Core 8,以及 SQLite × EF Core 9 / 10;
 已在真實產品([QuillNest](https://cornhsu.com/quillnest))的正式資料上驗證。
 
 ## 架構一覽
@@ -45,8 +45,6 @@ flowchart LR
     store --> label
     store --> link1
     store --> link2
-    label --- link1
-    label --- link2
 ```
 
 ## 為什麼需要它
@@ -104,6 +102,12 @@ services.AddLabeling<AppDbContext>(r =>
 });
 ```
 
+每個型別的連結表名稱是 `LabelLink_` + 它的型別鍵(type key),而型別鍵預設取類別名——
+所以之後把 `Note` 改名,它的表也會跟著改名(下一個 migration 會 drop 掉 `LabelLink_Note`、
+以新名稱另建一張空表)。類別名稱可能會改的話,註冊時把鍵釘住:
+`r.Labelable<Note>(n => n.Title, typeKey: "Note")`。前綴與 `Label` 表名分別是
+`r.LinkTablePrefix` 與 `r.LabelTableName`。
+
 **3. DbContext 一行掛上:**
 
 ```csharp
@@ -135,7 +139,8 @@ var labelsByNote = await store.GetLabelsOfManyAsync(visibleNotes);
 foreach (var n in visibleNotes)
     Render(n, labelsByNote[n]);                            // 每個實體保證有項目(可能為空清單)
 
-// 批次貼標(多選後「全部加上急件」;冪等、單次 SaveChanges):
+// 批次貼標(多選後「全部加上急件」;冪等;所有連結在一次 SaveChanges 寫入,
+// 需要自動建立的標籤則會在那之前逐一存檔):
 await store.AttachManyAsync(selectedNotes, new[] { "急件" });
 
 // 「策展式」標籤的 App(標籤帶顏色/圖示、由管理介面精心建立)可停用自動建立:
@@ -150,6 +155,50 @@ var todoIds = all
 ```
 
 完整可執行範例見 [samples/MinimalConsole](samples/MinimalConsole/Program.cs)。
+
+## 管理標籤
+
+標籤也可以事先建立、組成階層,並透過同一個 `ILabelStore` 維護:
+
+```csharp
+// 策展式標籤:事先建立,帶顏色、圖示與父標籤
+var work   = await store.CreateAsync("工作", color: "#FF5722", icon: "briefcase");
+var review = await store.CreateAsync("審稿", parentId: work.Id);    // 「工作」的子標籤
+await store.RenameAsync(review.Id, "同儕審稿");             // 連結存的是 Id,不受影響
+await store.UpdateAsync(work.Id, l => l.SortOrder = 1);     // Id 以外的欄位都能改;換父標籤會檢查循環
+var found  = await store.FindAsync("工作");                 // 沒有這個標籤時回傳 null
+var labels = await store.GetAllAsync();                     // 依 SortOrder、再依 Name 排序
+
+// 查詢預設含子孫標籤:查「工作」也會找到標了「同儕審稿」的東西
+var underWork = await store.FindByLabelAsync("工作");
+var onlyWork  = await store.FindByLabelAsync("工作", includeDescendants: false);
+
+await store.DetachAsync(note, "急件");                      // 沒貼著的名稱會被忽略
+var noteLabels = await store.GetLabelsOfAsync(note);
+
+// 標籤雲:標籤 Id → 跨所有型別的連結數。完全沒被用到的標籤不會出現在字典裡。
+var counts = await store.GetUsageCountsAsync();
+var uses   = counts.GetValueOrDefault(work.Id);
+
+await store.DeleteAsync(review.Id);    // 各型別的連結由 cascade delete 清除;
+                                       // 還有子標籤時會拋例外
+```
+
+## 不用 DI 容器
+
+把服務當單例持有的桌面 App(WPF、WinForms)或小型主控台工具,可以直接建立 store。
+registry 必須是 DbContext 傳給 `ApplyLabelModel` 的同一個實例,而且全 App 只能有一個:
+
+```csharp
+var registry = new LabelRegistry();
+registry.Labelable<Note>(n => n.Title);
+registry.Labelable<TodoItem>(t => t.Content);
+
+using var db = new AppDbContext(options, registry);
+var store = LabelStoreFactory.Create(db, registry);   // 第三個參數可選:ILogger<ILabelStore>
+```
+
+store 不擁有 DbContext,釋放它仍是你的責任。
 
 ## 使用 EF Core Migrations
 
@@ -238,7 +287,7 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 | | |
 |---|---|
 | ✅ | **真外鍵**,資料庫把關,cascade delete 自動清乾淨 |
-| ✅ | 型別安全,重構不會壞 |
+| ✅ | 型別安全;註冊時釘住型別鍵,重構改類別名也不會壞 |
 | ❌ | 跨型別查詢要合併 N 張表 |
 | ❌ | 新增模組要新增表 ← **唯一痛點,而消除它就是本套件的價值** |
 
@@ -252,7 +301,7 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 
 ### 決策與理由
 
-**選 B。** 用泛型 `LabelLink<TEntity>` 讓 EF Core 為每個註冊型別自動產生一張表(EF Core 支援把封閉泛型型別當作獨立實體),把方案 B 唯一的痛點自動化掉。
+**選 B。** 用泛型 `LabelLink<TEntity, TKey>` 讓 EF Core 為每個註冊型別自動產生一張表(EF Core 支援把封閉泛型型別當作獨立實體),把方案 B 唯一的痛點自動化掉。
 
 > **拿到方案 B 的外鍵完整性,但不用付方案 B 的手工成本。**
 
@@ -269,8 +318,11 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 | `CHSU001` | 型別實作了 `ILabelable<TKey>`,但編譯單元內沒有 `r.Labelable<T>()` 註冊 | 執行期貼標/查詢會拋「型別未註冊」——把錯誤提前到編譯期 |
 | `CHSU002` | 型別只實作了非泛型 `ILabelable`(marker) | 註冊時必因「無法推斷主鍵型別」拋例外 |
 
-註冊發生在其他組件時 `CHSU001` 會誤報,請用 `#pragma warning disable CHSU001`
-或 .editorconfig 對該型別靜音。
+完整說明、範例與修法:[docs/analyzer-rules.md](docs/analyzer-rules.md)。
+
+註冊發生在其他組件、或透過泛型 helper 註冊(`r.Labelable<T>()` 的 `T` 是型別參數)時,
+`CHSU001` 會誤報,請在該型別周圍用 `#pragma warning disable CHSU001`,
+或在 .editorconfig 針對宣告它的檔案靜音(.editorconfig 的嚴重度以檔案為單位,無法指定型別)。
 
 ## 效能
 
@@ -291,7 +343,7 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 清單畫面請用 `GetLabelsOfManyAsync`,不要在迴圈裡呼叫 `GetLabelsOfAsync`
 (本機 SQLite 差 5 倍;有網路延遲的資料庫差的是 49 次 roundtrip)。
 
-## Limitations
+## 限制
 
 - **實體主鍵支援 `int`/`long`/`Guid`/`string` 等具備相等運算子的型別,可在同一個 App 混用**;但 `Label` 本體的主鍵固定是 `Guid`(它是套件自有的表)。
 - **`LabelHit.EntityId` 是 `object`**——跨型別查詢的命中可能來自不同主鍵型別,這是泛型主鍵的必要代價;用 `EntityIdAs<TKey>()` 取回強型別。
@@ -305,7 +357,7 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 - **標籤名稱會自動去除前後空白**(所有輸入入口一致);大小寫語意交由資料庫 collation 決定(SQLite 預設區分大小寫、SQL Server 預設不區分)。
 - **get-or-create 標籤有競態**:兩條路徑同時建同名標籤會撞 unique index,以「重讀驗證後採用既有標籤」處理;若重讀發現不是同名競態,原例外照拋。
 - **並發修改保護**:`Label.ConcurrencyStamp` 是並發戳記(每次透過 store 修改就輪換,不依賴資料庫功能,所有 provider 行為一致)。兩邊同時修改同一個標籤時,後存檔的一方會得到 `DbUpdateConcurrencyException` 而不是默默蓋掉對方——請接住這個例外,重讀後重試或提示使用者。
-- **測試涵蓋 SQLite、SQL Server、PostgreSQL** 三個 provider(同一套測試,CI 每次都跑)。注意名稱大小寫語意隨 collation 而異:SQLite 預設區分大小寫、SQL Server 預設不區分。
+- **測試涵蓋 SQLite、SQL Server、PostgreSQL** 三個 provider(同一套測試,CI 每次都跑,EF Core 8;EF Core 9 / 10 那兩條只跑 SQLite)。注意名稱大小寫語意隨 collation 而異:SQLite 預設區分大小寫、SQL Server 預設不區分。
 - **`ILabelStore` 的寫入方法會呼叫你的 DbContext 的 `SaveChangesAsync`**——如果同一個 context 裡有其他未存檔的變更,會被一起送出。這是「與應用共用 DbContext」模式的固有取捨;若要隔離,請用獨立的 DbContext scope 呼叫 store。
 - **只支援 EF Core 8+**。相依樓地板是 8.0.11(8.0 系列中已修補已知弱點通報的版本),消費端用 EF Core 9/10 會自動 unify。
 - 測試請用 **SQLite in-memory,不要用 EF InMemory Provider**——後者不執行外鍵約束,測不到本套件的核心保證。

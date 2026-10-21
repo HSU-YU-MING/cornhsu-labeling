@@ -59,11 +59,12 @@ README + CHANGELOG，不是按 merge。
 
 ## CI 矩陣
 
-每次 push 都跑：三資料庫（SQLite / SQL Server / PostgreSQL）× EF Core 8 / 9 / 10。
+每次 push 都跑：三資料庫（SQLite / SQL Server / PostgreSQL）× EF Core 8，
+加上 SQLite × EF Core 9 / 10（SQL Server / PostgreSQL × EF 9/10 這 4 種組合 CI 沒有跑）。
 EF 9/10 是**真的引用新版 EF 跑同一套測試**，不是只換 SDK：
 
 ```bash
-dotnet test tests/Cornhsu.Labeling.Tests -p:CornhsuTestTfm=net10.0 -p:CornhsuEfVersion=10.0.*
+dotnet test tests/Cornhsu.Labeling.Tests -p:CornhsuTestTfm=net10.0 -p:CornhsuEfVersion=10.0.* -p:CornhsuDiVersion=10.0.*
 ```
 
 `samples/MinimalConsole` 也在 CI 跑 —— 它是「抽象是否成立」的哨兵，不只是示範。

@@ -4,6 +4,8 @@
 to enable these rules. Both are warnings, both are reported at compilation end (they need to see the
 whole compilation before they can conclude that a registration is missing).
 
+<a id="chsu001"></a>
+
 ## CHSU001 — Labelable type is not registered
 
 A type implements `ILabelable<TKey>`, but this compilation contains no `r.Labelable<T>()` call for it.
@@ -12,6 +14,7 @@ A type implements `ILabelable<TKey>`, but this compilation contains no `r.Labela
 public class Note : ILabelable<int>   // ⚠ CHSU001
 {
     public int Id { get; set; }
+    public string Title { get; set; } = "";
 }
 
 services.AddLabeling<AppDbContext>(r =>
@@ -21,7 +24,8 @@ services.AddLabeling<AppDbContext>(r =>
 ```
 
 **Why it matters.** Nothing fails at build time, but the first `AttachAsync(note, "urgent")` throws
-`InvalidOperationException: type Note is not registered.` — usually in front of a user, at run time.
+`InvalidOperationException: type Note is not registered. Call r.Labelable<Note>() inside AddLabeling.`
+— usually in front of a user, at run time.
 
 **Fix.** Register the type where you configure the labeling system:
 
@@ -32,14 +36,24 @@ services.AddLabeling<AppDbContext>(r =>
 });
 ```
 
-**When to suppress.** The analyzer only sees one compilation at a time. If your registration lives in
-another assembly (a composition-root project, for instance), the warning is a false positive — suppress
-it with `#pragma warning disable CHSU001`, a `[SuppressMessage]` attribute, or a `.editorconfig` entry:
+**When to suppress.** The analyzer only sees one compilation at a time, and only calls that name the
+type directly. If your registration lives in another assembly (a composition-root project, for
+instance), or goes through a generic helper such as
+`static void Reg<T>(LabelRegistry r) where T : class, ILabelable => r.Labelable<T>()` (the analyzer
+cannot tell which types reach `T`), the warning is a false positive — suppress it with
+`#pragma warning disable CHSU001` around the type, a
+`[SuppressMessage("Cornhsu.Labeling", "CHSU001")]` attribute on it, or a `.editorconfig` entry.
+`.editorconfig` severities apply to files, not types, so scope the section to the file that declares
+the type:
 
 ```ini
-[*.cs]
+[Models/Note.cs]
 dotnet_diagnostic.CHSU001.severity = none
 ```
+
+A `[*.cs]` section would turn the rule off for every type in the project.
+
+<a id="chsu002"></a>
 
 ## CHSU002 — Only the non-generic ILabelable marker is implemented
 

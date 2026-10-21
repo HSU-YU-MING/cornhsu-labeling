@@ -11,8 +11,8 @@
 Polymorphic labeling for EF Core. **One label, attachable to any type** — with a real foreign
 key behind every single link.
 
-Tested across SQLite / SQL Server / PostgreSQL × EF Core 8 / 9 / 10, and validated on the
-production data of a real product ([QuillNest](https://cornhsu.com/quillnest)).
+Tested on SQLite / SQL Server / PostgreSQL with EF Core 8 and on SQLite with EF Core 9 / 10, and
+validated on the production data of a real product ([QuillNest](https://cornhsu.com/quillnest)).
 
 ## Architecture
 
@@ -107,6 +107,12 @@ services.AddLabeling<AppDbContext>(r =>
 });
 ```
 
+Each type's link table is named `LabelLink_` + its type key, and the type key defaults to the class
+name — so renaming `Note` later renames its table too (the next migration drops `LabelLink_Note` and
+creates an empty table under the new name). If the class name may change, pin the key at
+registration: `r.Labelable<Note>(n => n.Title, typeKey: "Note")`. The prefix and the `Label` table
+name are `r.LinkTablePrefix` and `r.LabelTableName`.
+
 **3. One line in your DbContext:**
 
 ```csharp
@@ -138,7 +144,8 @@ var labelsByNote = await store.GetLabelsOfManyAsync(visibleNotes);
 foreach (var n in visibleNotes)
     Render(n, labelsByNote[n]);                              // every entity has an entry (possibly empty)
 
-// Bulk attach ("select several, tag them all urgent"; idempotent, one SaveChanges):
+// Bulk attach ("select several, tag them all urgent"; idempotent; all the links go in one
+// SaveChanges, after any labels it has to auto-create, which are saved one at a time):
 await store.AttachManyAsync(selectedNotes, new[] { "urgent" });
 
 // Apps with a curated label set (labels carry colors/icons, created via an admin screen)
@@ -155,6 +162,52 @@ var todoIds = all
 ```
 
 A complete runnable example lives in [samples/MinimalConsole](samples/MinimalConsole/Program.cs).
+
+## Managing labels
+
+Labels can also be created up front, organized into a hierarchy, and maintained through the same
+`ILabelStore`:
+
+```csharp
+// Curated labels: create them up front with a color, an icon and a parent
+var work   = await store.CreateAsync("work", color: "#FF5722", icon: "briefcase");
+var review = await store.CreateAsync("review", parentId: work.Id);   // a child of "work"
+await store.RenameAsync(review.Id, "peer review");          // links store the Id, so they are untouched
+await store.UpdateAsync(work.Id, l => l.SortOrder = 1);     // any field but Id; a new parent is checked for cycles
+var found  = await store.FindAsync("work");                 // null when there is no such label
+var labels = await store.GetAllAsync();                     // ordered by SortOrder, then Name
+
+// Queries include descendant labels by default: "work" also finds what is tagged "peer review"
+var underWork = await store.FindByLabelAsync("work");
+var onlyWork  = await store.FindByLabelAsync("work", includeDescendants: false);
+
+await store.DetachAsync(note, "urgent");                    // names that are not attached are ignored
+var noteLabels = await store.GetLabelsOfAsync(note);
+
+// Tag cloud: label Id → number of links across every type. Labels used nowhere have no entry.
+var counts = await store.GetUsageCountsAsync();
+var uses   = counts.GetValueOrDefault(work.Id);
+
+await store.DeleteAsync(review.Id);    // links on every type are removed by cascade;
+                                       // throws while the label still has children
+```
+
+## Without a DI container
+
+Desktop apps that hold their services as singletons (WPF, WinForms) or small console tools can build
+the store directly. The registry must be the same instance your DbContext passes to
+`ApplyLabelModel`, and there must be only one per application:
+
+```csharp
+var registry = new LabelRegistry();
+registry.Labelable<Note>(n => n.Title);
+registry.Labelable<TodoItem>(t => t.Content);
+
+using var db = new AppDbContext(options, registry);
+var store = LabelStoreFactory.Create(db, registry);   // optional third argument: ILogger<ILabelStore>
+```
+
+The store does not own the DbContext; disposing it stays with you.
 
 ## Using EF Core migrations
 
@@ -248,7 +301,7 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 | | |
 |---|---|
 | ✅ | **Real foreign keys**: the database enforces integrity and cascade delete cleans up automatically |
-| ✅ | Type-safe; refactoring cannot break it |
+| ✅ | Type-safe; with the type key pinned at registration, renaming a class cannot break it |
 | ❌ | A cross-type query has to union N tables |
 | ❌ | A new module means a new table ← **the only pain point, and removing it is this package's whole value** |
 
@@ -262,7 +315,7 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 
 ### The decision, and why
 
-**Option B.** A generic `LabelLink<TEntity>` lets EF Core generate one table per registered type
+**Option B.** A generic `LabelLink<TEntity, TKey>` lets EF Core generate one table per registered type
 (EF Core treats a closed generic type as its own entity), which automates away Option B's only
 pain point.
 
@@ -286,8 +339,10 @@ The package ships an analyzer — installing it is all it takes. Two rules:
 
 Full details, examples and fixes: [docs/analyzer-rules.md](docs/analyzer-rules.md).
 
-`CHSU001` is a false positive when the registration lives in another assembly — silence it with
-`#pragma warning disable CHSU001` or an `.editorconfig` entry for that type.
+`CHSU001` is a false positive when the registration lives in another assembly, or goes through a
+generic helper (`r.Labelable<T>()` where `T` is a type parameter) — silence it with
+`#pragma warning disable CHSU001` around the type, or an `.editorconfig` entry for the file that
+declares it (`.editorconfig` severities apply per file, not per type).
 
 ## Performance
 
@@ -341,8 +396,9 @@ with network latency the difference is 49 round trips.
   is identical across providers. When two callers modify the same label, the one that saves second
   gets a `DbUpdateConcurrencyException` instead of silently overwriting — catch it, then re-read
   and retry or prompt the user.
-- **Tested against SQLite, SQL Server and PostgreSQL** (the same test suite, on every CI run).
-  Note that name case semantics vary with collation, as described above.
+- **Tested against SQLite, SQL Server and PostgreSQL** (the same test suite, on every CI run, with
+  EF Core 8; the EF Core 9 and 10 runs use SQLite only). Note that name case semantics vary with
+  collation, as described above.
 - **`ILabelStore`'s write methods call your DbContext's `SaveChangesAsync`** — any other pending
   changes in that same context get committed along with them. That is the inherent trade-off of
   sharing a DbContext with the application; if you need isolation, call the store from a separate

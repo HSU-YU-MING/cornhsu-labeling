@@ -13,6 +13,9 @@ public static class ModelBuilderExtensions
     /// <param name="registry">The label registry (must be an application-wide singleton).</param>
     public static ModelBuilder ApplyLabelModel(this ModelBuilder b, LabelRegistry registry)
     {
+        if (b is null) throw new ArgumentNullException(nameof(b));
+        if (registry is null) throw new ArgumentNullException(nameof(registry));
+
         b.Entity<Label>(e =>
         {
             e.ToTable(registry.LabelTableName);

@@ -59,6 +59,11 @@
     都編譯不過。現在帶外層型別與型別參數:`Type 'Outer.Inner' …`、`Type 'Box<T>' …`、`Type 'Outer<T>.Note' …`。
     頂層非泛型型別(絕大多數情況)的訊息一字不變。規則 ID、嚴重度、分類、`CHSU002` 的訊息都不變。
     有人 grep 或斷言巢狀型別的 `CHSU001` 訊息的話要跟著改,所以升 minor。
+- **`AddLabeling` 與 `ApplyLabelModel` 的 null 參數改拋 `ArgumentNullException`**(**minor:對外可見的例外型別改變**)。
+  以前 `AddLabeling(configure: null)`、`ApplyLabelModel(b 或 registry: null)` 拋的是 `NullReferenceException`;
+  `AddLabeling(services: null)` 雖然拋 `ArgumentNullException`,但 `configure` 已經先執行完、registry 也已封存。
+  現在進入方法就檢查,`ParamName` 分別是 `services`、`configure`、`b`、`registry`,與 store 的其他公開入口一致。
+  只影響本來就是程式錯誤的呼叫;有人接 `NullReferenceException` 的話要改接 `ArgumentNullException`。
 
 ### Changed
 - **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**

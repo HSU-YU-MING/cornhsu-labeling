@@ -10,6 +10,29 @@ namespace Cornhsu.Labeling.Tests;
 public class DependencyInjectionTests
 {
     [Fact]
+    public void AddLabeling_參數為null_拋出ArgumentNullException_且不執行configure()
+    {
+        var called = false;
+
+        var nullServices = () => ((IServiceCollection)null!).AddLabeling<TestDbContext>(_ => called = true);
+        var nullConfigure = () => new ServiceCollection().AddLabeling<TestDbContext>(null!);
+
+        nullServices.Should().Throw<ArgumentNullException>().Which.ParamName.Should().Be("services");
+        called.Should().BeFalse("參數檢查要在執行 configure 之前,不然 registry 已經建好又封存了才失敗");
+        nullConfigure.Should().Throw<ArgumentNullException>().Which.ParamName.Should().Be("configure");
+    }
+
+    [Fact]
+    public void ApplyLabelModel_參數為null_拋出ArgumentNullException()
+    {
+        var nullBuilder = () => ((ModelBuilder)null!).ApplyLabelModel(new LabelRegistry());
+        var nullRegistry = () => new ModelBuilder().ApplyLabelModel(null!);
+
+        nullBuilder.Should().Throw<ArgumentNullException>().Which.ParamName.Should().Be("b");
+        nullRegistry.Should().Throw<ArgumentNullException>().Which.ParamName.Should().Be("registry");
+    }
+
+    [Fact]
     public void AddLabeling_Registry為Singleton_Store為Scoped()
     {
         var services = new ServiceCollection();

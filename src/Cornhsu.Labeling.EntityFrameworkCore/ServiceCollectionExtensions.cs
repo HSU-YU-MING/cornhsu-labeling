@@ -18,6 +18,10 @@ public static class ServiceCollectionExtensions
         Action<LabelRegistry> configure)
         where TContext : DbContext
     {
+        // 先檢查參數:services 為 null 時不能等 configure 跑完、registry 封存之後才由 DI 拋
+        if (services is null) throw new ArgumentNullException(nameof(services));
+        if (configure is null) throw new ArgumentNullException(nameof(configure));
+
         var registry = new LabelRegistry();
         configure(registry);
         registry.Seal();

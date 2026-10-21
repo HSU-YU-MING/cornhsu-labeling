@@ -287,6 +287,62 @@ public class UpdateFailureTests
     }
 
     [Fact]
+    public async Task 自動偵測變更關掉時_經Parent導覽屬性成環_一樣擋下()
+    {
+        // 自動偵測開著時,列舉追蹤器就會順便偵測;關掉之後只剩 lambda 後那次 DetectLabelChanges 讓循環檢查看得到
+        using var db = new TestDb();
+        var root = await db.Store.CreateAsync("root");
+        var child = await db.Store.CreateAsync("child", parentId: root.Id);
+        db.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+
+        var act = () => db.Store.UpdateAsync(root.Id, l => l.Parent = child);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*would form a cycle*");
+        (await StoredAsync(db, root.Id)).ParentId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task 自動偵測變更關掉時_消費端還沒偵測的導覽屬性修改_UpdateAsync被擋下後原樣保留()
+    {
+        // 拍快照前先偵測:不然快照記的是舊外鍵,還原時會把消費端自己的搬移一起撤掉
+        using var db = new TestDb();
+        var a = await db.Store.CreateAsync("a");
+        var b = await db.Store.CreateAsync("b");
+        var target = await db.Store.CreateAsync("目標");
+        db.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+        a.Parent = b;   // 消費端自己的搬移,還沒偵測、還沒存
+
+        var act = () => db.Store.UpdateAsync(target.Id, l => l.Name = "   ");
+        await act.Should().ThrowAsync<ArgumentException>();
+
+        a.Parent.Should().BeSameAs(b);
+        db.Context.ChangeTracker.DetectChanges();
+        await db.Context.SaveChangesAsync();
+        (await StoredAsync(db, a.Id)).ParentId.Should().Be(b.Id);
+    }
+
+    [Fact]
+    public async Task lambda經Children帶進新標籤後被擋下_那個新標籤不會在下一次存檔插入()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var fresh = new Label { Id = Guid.NewGuid(), Name = "stray", CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
+
+        var act = () => db.Store.UpdateAsync(parent.Id, l =>
+        {
+            l.Children.Add(fresh);
+            l.Name = "  ";
+        });
+        await act.Should().ThrowAsync<ArgumentException>();
+
+        db.Context.Entry(fresh).State.Should().Be(EntityState.Detached);
+        parent.Children.Should().BeEmpty();
+        await db.Store.CreateAsync("x");
+        using var other = db.CreateSecondContext();
+        (await other.Set<Label>().AsNoTracking().AnyAsync(l => l.Id == fresh.Id)).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task 自動偵測變更關掉時_UpdateAsync偵測每個追蹤中的標籤_但不替消費端偵測其他型別的實體()
     {
         using var db = new TestDb();

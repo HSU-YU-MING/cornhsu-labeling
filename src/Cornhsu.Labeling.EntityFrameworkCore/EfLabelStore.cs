@@ -153,7 +153,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             // 先把被改掉的主鍵放回去(否則偵測會因主鍵被改而拋),再盡力偵測一次,讓它們變成還原得掉的外鍵值
             snapshot.RestoreKeys();
             DetectLabelChangesBestEffort();
-            snapshot.Restore(detachUncapturedOf: typeof(Label));
+            snapshot.Restore(detachUncapturedLabels: true);
             await ReloadConflictsAsync(ex, snapshot).ConfigureAwait(false);
             throw;
         }

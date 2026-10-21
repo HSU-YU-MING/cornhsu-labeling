@@ -278,6 +278,62 @@ public class WriteFailureTests
         (await context.Set<Label>().CountAsync()).Should().Be(1);
     }
 
+    [Fact]
+    public async Task DeleteAsync存檔失敗後_參照它的實體原本就有未存修改_外鍵與修改都原樣保留()
+    {
+        var failure = new FailOnce(c => c.ChangeTracker.Entries<Label>().Any(e => e.State == EntityState.Deleted));
+        using var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var registry = new LabelRegistry().Labelable<TestNote>();
+        var options = new DbContextOptionsBuilder<ClassifiedDbContext>()
+            .UseSqlite(conn).EnableServiceProviderCaching(false).AddInterceptors(failure).Options;
+        using var context = new ClassifiedDbContext(options, registry);
+        context.Database.EnsureCreated();
+        var store = LabelStoreFactory.Create(context, registry);
+        var label = await store.CreateAsync("分類");
+        var other = await store.CreateAsync("另一個");
+        var item = new Classified { Id = Guid.NewGuid(), CategoryId = other.Id };
+        context.Add(item);
+        await context.SaveChangesAsync();
+        item.CategoryId = label.Id;   // 消費端自己的未存修改:改掛到要刪的那個標籤,狀態是 Modified
+
+        var act = () => store.DeleteAsync(label.Id);
+        await act.Should().ThrowAsync<DbUpdateException>();
+
+        item.CategoryId.Should().Be(label.Id, "EF 刪除時把它設成 null,失敗後要放回消費端自己改的值");
+        context.Entry(item).State.Should().Be(EntityState.Modified);
+    }
+
+    [Fact]
+    public async Task DeleteAsync存檔失敗後_多層cascade下去的項目也還原()
+    {
+        var failure = new FailOnce(c => c.ChangeTracker.Entries<Label>().Any(e => e.State == EntityState.Deleted));
+        using var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var registry = new LabelRegistry().Labelable<TestNote>();
+        var options = new DbContextOptionsBuilder<ClassifiedDbContext>()
+            .UseSqlite(conn).EnableServiceProviderCaching(false).AddInterceptors(failure).Options;
+        using var context = new ClassifiedDbContext(options, registry);
+        context.Database.EnsureCreated();
+        var store = LabelStoreFactory.Create(context, registry);
+        var label = await store.CreateAsync("分類");
+        var pin = new Pin { Id = Guid.NewGuid(), LabelId = label.Id };
+        var pinNote = new PinNote { Id = Guid.NewGuid(), PinId = pin.Id };
+        context.AddRange(pin, pinNote);
+        await context.SaveChangesAsync();
+
+        var act = () => store.DeleteAsync(label.Id);
+        await act.Should().ThrowAsync<DbUpdateException>();
+
+        // pin 直接參照標籤;pinNote 參照的是 pin,只會被 EF 的第二層 cascade 標成刪除
+        context.Entry(pinNote).State.Should().Be(EntityState.Unchanged);
+        context.ChangeTracker.HasChanges().Should().BeFalse();
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        (await context.Set<PinNote>().CountAsync()).Should().Be(1);
+        (await context.Set<Pin>().CountAsync()).Should().Be(1);
+    }
+
     // ---- 貼標 / 撕標 ----
 
     [Fact]
@@ -573,6 +629,22 @@ public class Classified
     public Label? Category { get; set; }
 }
 
+/// <summary>以必填外鍵參照標籤、刪標籤時 cascade 刪除的實體。</summary>
+public class Pin
+{
+    public Guid Id { get; set; }
+    public Guid LabelId { get; set; }
+    public Label? Label { get; set; }
+}
+
+/// <summary>參照 <see cref="Pin"/> 的實體:刪標籤時被第二層 cascade 刪除。</summary>
+public class PinNote
+{
+    public Guid Id { get; set; }
+    public Guid PinId { get; set; }
+    public Pin? Pin { get; set; }
+}
+
 public class ClassifiedDbContext : DbContext
 {
     private readonly LabelRegistry _registry;
@@ -589,6 +661,16 @@ public class ClassifiedDbContext : DbContext
             e.HasOne(x => x.Category).WithMany()
              .HasForeignKey(x => x.CategoryId)
              .OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<Pin>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasOne(x => x.Label).WithMany().HasForeignKey(x => x.LabelId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<PinNote>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasOne(x => x.Pin).WithMany().HasForeignKey(x => x.PinId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

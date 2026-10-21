@@ -102,11 +102,11 @@ internal sealed class TrackerSnapshot
     }
 
     /// <summary>
-    /// 還原:store 新加的實體 detach;<paramref name="detachUncapturedOf"/> 型別裡沒被記下的項目
-    /// (例如 UpdateAsync 的 lambda 經導覽屬性帶進追蹤器的新標籤)也 detach;
+    /// 還原:store 新加的實體 detach;<paramref name="detachUncapturedLabels"/> 時,沒被記下的標籤
+    /// (UpdateAsync 的 lambda 經導覽屬性帶進追蹤器的新標籤)也 detach,並從其他標籤的 Children 裡拿掉;
     /// 記下的項目依記錄順序放回當時的值、已修改欄位與狀態。
     /// </summary>
-    public void Restore(Type? detachUncapturedOf = null)
+    public void Restore(bool detachUncapturedLabels = false)
     {
         var tracker = _db.ChangeTracker;
         var autoDetect = tracker.AutoDetectChangesEnabled;
@@ -120,13 +120,26 @@ internal sealed class TrackerSnapshot
                     entry.State = EntityState.Detached;
             }
 
-            if (detachUncapturedOf is not null)
+            if (detachUncapturedLabels)
             {
-                var strays = tracker.Entries()
-                    .Where(e => detachUncapturedOf.IsInstanceOfType(e.Entity) && !_captured.Contains(e.Entity))
+                var strays = tracker.Entries<Label>()
+                    .Where(e => !_captured.Contains(e.Entity))
                     .ToList();
                 foreach (var entry in strays)
                     entry.State = EntityState.Detached;
+
+                // detach 不會把它從別的標籤的 Children(CLR 集合)裡拿掉:留著的話畫面上看得到一個幽靈子標籤,
+                // 之後的偵測也可能把它當成新加入的再追蹤回來
+                if (strays.Count > 0)
+                {
+                    var strayLabels = new HashSet<Label>(strays.Select(e => e.Entity), ReferenceEqualityComparer.Instance);
+                    foreach (var entry in tracker.Entries<Label>())
+                    {
+                        if (entry.Entity.Children is not { IsReadOnly: false } children) continue;
+                        foreach (var stray in children.Where(strayLabels.Contains).ToList())
+                            children.Remove(stray);
+                    }
+                }
             }
 
             foreach (var item in _items)

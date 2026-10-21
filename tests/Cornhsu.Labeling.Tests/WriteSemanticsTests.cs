@@ -1,6 +1,7 @@
 using Cornhsu.Labeling.EntityFrameworkCore;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace Cornhsu.Labeling.Tests;
@@ -65,13 +66,14 @@ public class WriteSemanticsTests
     [Fact]
     public async Task 自動建立標籤的那次存檔_也會一起送出未存的變更()
     {
-        using var db = new TestDb();   // AutoCreateLabels 預設 true
+        var failLinks = new FailLinkInsert();
+        using var db = new TestDb(null, failLinks);   // AutoCreateLabels 預設 true
         var note = await db.AddNoteAsync();
         var pending = AddPendingNote(db);
 
-        // 名稱過長 → 連結那次 SaveChanges 走不到;但前面「自動建立」那次已經存檔
-        var act = () => db.Store.AttachAsync(note, "合法", new string('長', Label.MaxNameLength + 1));
-        await act.Should().ThrowAsync<ArgumentException>();
+        // 攔截器讓「寫連結」那次存檔失敗:pending 若已落地,只可能是前面「自動建立標籤」那次存檔帶出去的
+        var act = () => db.Store.AttachAsync(note, "自動");
+        (await act.Should().ThrowAsync<DbUpdateException>()).Which.Should().BeSameAs(failLinks.Thrown);
 
         (await PersistedAsync(db, pending)).Should().BeTrue("get-or-create 的存檔就是消費端 context 的 SaveChangesAsync");
     }
@@ -131,5 +133,22 @@ public class WriteSemanticsTests
 
         (await db.Store.GetAllAsync()).Should().BeEmpty();
         (await db.Store.GetLabelsOfAsync(note)).Should().BeEmpty();
+    }
+
+    /// <summary>context 裡有待新增的 Note 連結時讓存檔失敗(模擬「寫連結」那一步出錯)。</summary>
+    private sealed class FailLinkInsert : SaveChangesInterceptor
+    {
+        public DbUpdateException? Thrown { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context!.ChangeTracker.Entries<LabelLink<TestNote, Guid>>().Any(e => e.State == EntityState.Added))
+            {
+                Thrown = new DbUpdateException("模擬的連結寫入失敗");
+                throw Thrown;
+            }
+            return ValueTask.FromResult(result);
+        }
     }
 }

@@ -113,6 +113,53 @@ public class HierarchyTests
         without.Should().ContainSingle().Which.Id.Should().Be(direct.Id);
     }
 
+    /// <summary>
+    /// 繞過 store 直接改資料庫,讓兩個標籤互為父子(store 的循環檢查管不到這條路;
+    /// 資料庫的外鍵也不擋環)。用來驗證走訪階層的程式碼遇到異常資料會結束,不會無限繞圈。
+    /// </summary>
+    private static async Task CorruptParentAsync(TestDb db, Guid labelId, Guid parentId)
+    {
+        using var other = db.CreateSecondContext();
+        var label = await other.Set<Label>().SingleAsync(l => l.Id == labelId);
+        label.ParentId = parentId;
+        await other.SaveChangesAsync();
+    }
+
+    /// <summary>放到背景執行緒並設上限:走訪若陷入無限迴圈,測試是紅燈而不是整個測試回合卡住。</summary>
+    private static Task<T> WithinTimeLimit<T>(Func<Task<T>> action)
+        => Task.Run(action).WaitAsync(TimeSpan.FromSeconds(30));
+
+    [Fact]
+    public async Task 資料裡的階層已經成環_包含子孫的查詢仍會結束_每個實體只出現一次()
+    {
+        using var db = new TestDb();
+        var paper = await db.Store.CreateAsync("論文");
+        var review = await db.Store.CreateAsync("文獻回顧", parentId: paper.Id);
+        await db.Store.AttachAsync(await db.AddNoteAsync("貼論文"), "論文");
+        await db.Store.AttachAsync(await db.AddNoteAsync("貼文獻回顧"), "文獻回顧");
+        await CorruptParentAsync(db, paper.Id, review.Id);   // 論文 ⇄ 文獻回顧
+
+        var hits = await WithinTimeLimit(() => db.Store.FindByLabelAsync("論文"));
+
+        hits.Select(h => h.DisplayName).Should().BeEquivalentTo(new[] { "貼論文", "貼文獻回顧" });
+    }
+
+    [Fact]
+    public async Task 資料裡的階層已經成環_把環外的標籤搬到環上_循環檢查仍會結束()
+    {
+        using var db = new TestDb();
+        var paper = await db.Store.CreateAsync("論文");
+        var review = await db.Store.CreateAsync("文獻回顧", parentId: paper.Id);
+        var outsider = await db.Store.CreateAsync("方法");
+        await CorruptParentAsync(db, paper.Id, review.Id);   // 論文 ⇄ 文獻回顧
+
+        // 沿祖先鏈往上走永遠碰不到「方法」自己:要靠步數上限跳出,讓這次與環無關的搬移照常完成
+        await WithinTimeLimit(() => db.Store.UpdateAsync(outsider.Id, l => l.ParentId = paper.Id));
+
+        using var other = db.CreateSecondContext();
+        (await other.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == outsider.Id)).ParentId.Should().Be(paper.Id);
+    }
+
     [Fact]
     public async Task 名稱全域唯一_不同父標籤底下也不能同名()
     {

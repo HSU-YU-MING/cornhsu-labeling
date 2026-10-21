@@ -113,6 +113,10 @@ creates an empty table under the new name). If the class name may change, pin th
 registration: `r.Labelable<Note>(n => n.Title, typeKey: "Note")`. The prefix and the `Label` table
 name are `r.LinkTablePrefix` and `r.LabelTableName`.
 
+A generic entity type must always pin its key. The default is the CLR name, which for `Box<int>` is
+``Box`1``: the table name gets a backtick, and every construction of `Box<…>` shares that key, so a
+second one cannot be registered next to the first.
+
 **3. One line in your DbContext:**
 
 ```csharp

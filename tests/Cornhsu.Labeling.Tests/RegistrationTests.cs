@@ -142,6 +142,33 @@ public class RegistrationTests
         db.Registry.Descriptors.Select(d => d.TypeKey).Should().Equal("TestNote", "TestTodo");
     }
 
+    /// <summary>泛型的可標記型別。</summary>
+    private sealed class TestBox<T> : ILabelable<Guid>
+    {
+        public Guid Id { get; set; }
+    }
+
+    [Fact] // README 與 Labelable 的 XML:泛型實體一定要釘 typeKey
+    public void 泛型實體沒釘TypeKey_預設是含反引號的CLR名稱_第二個建構型別註冊不了()
+    {
+        var registry = new LabelRegistry();
+        registry.Labelable<TestBox<int>>();
+
+        registry.Descriptors.Single().TypeKey.Should().Be("TestBox`1", "預設取 typeof(T).Name,表名會是 LabelLink_TestBox`1");
+        var act = () => registry.Labelable<TestBox<string>>();
+        act.Should().Throw<InvalidOperationException>().WithMessage("TypeKey 'TestBox`1' is already registered.");
+    }
+
+    [Fact]
+    public void 泛型實體釘住TypeKey_各個建構型別可以各自註冊()
+    {
+        var registry = new LabelRegistry();
+
+        registry.Labelable<TestBox<int>>(typeKey: "IntBox").Labelable<TestBox<string>>(typeKey: "StringBox");
+
+        registry.Descriptors.Select(d => d.TypeKey).Should().Equal("IntBox", "StringBox");
+    }
+
     [Fact]
     public void 同一個CLR型別換個TypeKey再註冊一次_拋例外()
     {

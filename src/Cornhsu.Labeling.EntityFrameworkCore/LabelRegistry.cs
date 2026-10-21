@@ -37,7 +37,9 @@ public sealed class LabelRegistry
     /// <typeparam name="TEntity">An entity type implementing <see cref="ILabelable{TKey}"/>.</typeparam>
     /// <param name="displayName">Projection that produces <see cref="LabelHit.DisplayName"/> for cross-type queries.</param>
     /// <param name="typeKey">Stable type key used for persistence; defaults to the class name. Pinning it explicitly is
-    /// recommended so renaming the class does not rename the table.</param>
+    /// recommended so renaming the class does not rename the table. Generic entity types must pin it: the default
+    /// is the CLR name (<c>Box`1</c> for <c>Box&lt;int&gt;</c>), which puts a backtick in the table name and is
+    /// shared by every construction of the type, so a second one (<c>Box&lt;string&gt;</c>) cannot be registered.</param>
     public LabelRegistry Labelable<TEntity>(
         Func<TEntity, string?>? displayName = null,
         string? typeKey = null)

@@ -108,6 +108,9 @@ services.AddLabeling<AppDbContext>(r =>
 `r.Labelable<Note>(n => n.Title, typeKey: "Note")`。前綴與 `Label` 表名分別是
 `r.LinkTablePrefix` 與 `r.LabelTableName`。
 
+泛型的實體型別一定要釘住型別鍵。預設取的是 CLR 名稱,`Box<int>` 會得到 ``Box`1``:表名帶反引號,
+而且所有 `Box<…>` 共用這個鍵,第二個建構型別就註冊不進去。
+
 **3. DbContext 一行掛上:**
 
 ```csharp

@@ -72,6 +72,9 @@
 - **`ILabelableDescriptor.TypeKey` 的 XML 註解更正**(patch,只改文件)。以前寫它 "does not change when the class
   is renamed",只有註冊時用 `typeKey:` 釘住才成立;預設取類別名,改類別名就換表名,下一次 migration 會 drop 掉舊連結表。
   推導規則不變(改它會換表名,是 major)。
+- **README 與 `LabelRegistry.Labelable` 的 XML 寫明泛型實體一定要釘 `typeKey`**(patch,只改文件)。
+  沒釘的話預設取 CLR 名稱,`Box<int>` 得到 ``Box`1``:連結表名帶反引號,而且所有 `Box<…>` 共用這個鍵,
+  第二個建構型別註冊時拋 "TypeKey 'Box`1' is already registered."。推導規則與例外訊息都不變。
 - **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**
   (patch,只改文件)。這四支在記憶體以 Ordinal(區分大小寫)比對名稱,不跟資料庫 collation 走;
   `FindAsync`、貼標、撕標則在資料庫端比對。在不分大小寫的 collation 上(例如 SQL Server 預設),

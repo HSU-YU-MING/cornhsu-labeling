@@ -50,18 +50,19 @@ public class UpdateFailureTests
     }
 
     [Fact]
-    public async Task 空白名稱被擋下後_再只改顏色_名稱檢查不會被髒值跳過()
+    public async Task 消費端自己把名稱改成空白還沒存_UpdateAsync只改顏色也要擋下_名稱檢查比的是資料庫裡的值()
     {
         using var db = new TestDb();
         var label = await db.Store.CreateAsync("論文");
+        label.Name = "   ";   // 消費端自己對追蹤中的標籤做的修改,不是這次 lambda 改的;UpdateAsync 存檔時會一起寫出去
 
-        var blank = () => db.Store.UpdateAsync(label.Id, l => l.Name = "   ");
-        await blank.Should().ThrowAsync<ArgumentException>();
-        await db.Store.UpdateAsync(label.Id, l => l.Color = "#FF0000");
+        var act = () => db.Store.UpdateAsync(label.Id, l => l.Color = "#FF0000");
 
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("label name must not be blank.*");
         var stored = await StoredAsync(db, label.Id);
         stored.Name.Should().Be("論文");
-        stored.Color.Should().Be("#FF0000");
+        stored.Color.Should().BeNull();
+        label.Name.Should().Be("   ", "還原的是這次呼叫的修改,消費端自己的未存值原樣留著");
     }
 
     [Fact]

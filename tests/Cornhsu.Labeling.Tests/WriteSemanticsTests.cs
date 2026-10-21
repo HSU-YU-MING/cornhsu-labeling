@@ -93,6 +93,52 @@ public class WriteSemanticsTests
     }
 
     [Fact]
+    public async Task AttachAsync_要自動建立的名稱有一個超長_拋例外前什麼都不建立_也不送出未存的變更()
+    {
+        using var db = new TestDb();
+        var note = await db.AddNoteAsync();
+        var pending = AddPendingNote(db);
+
+        // 合法的名稱排在前面:驗證若晚於寫入,它會先被建立並存檔,連帶送出 pending
+        var act = () => db.Store.AttachAsync(note, "合法", new string('長', Label.MaxNameLength + 1));
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage($"label name is {Label.MaxNameLength + 1} characters, over the {Label.MaxNameLength} limit: '{new string('長', 16)}…'");
+
+        using var other = db.CreateSecondContext();
+        (await other.Set<Label>().AsNoTracking().CountAsync()).Should().Be(0);
+        (await PersistedAsync(db, pending)).Should().BeFalse("參數驗證失敗時不該有任何存檔");
+    }
+
+    [Fact]
+    public async Task AttachManyAsync_要自動建立的名稱有一個超長_拋例外前什麼都不建立()
+    {
+        using var db = new TestDb();
+        var note = await db.AddNoteAsync();
+
+        var act = () => db.Store.AttachManyAsync(new[] { note }, new[] { "合法", "也合法", new string('長', Label.MaxNameLength + 1) });
+        await act.Should().ThrowAsync<ArgumentException>();
+
+        using var other = db.CreateSecondContext();
+        (await other.Set<Label>().AsNoTracking().CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AttachAsync_停用自動建立時_超長的名稱照舊列在缺漏清單裡_不改拋長度例外()
+    {
+        using var db = new TestDb(r =>
+        {
+            r.Labelable<TestNote>();
+            r.AutoCreateLabels = false;
+        });
+        var note = await db.AddNoteAsync();
+        var tooLong = new string('長', Label.MaxNameLength + 1);
+
+        var act = () => db.Store.AttachAsync(note, "沒有", tooLong);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage($"label(s) '沒有', '{tooLong}' do not exist*");
+    }
+
+    [Fact]
     public async Task AttachAsync_實體不在資料庫裡_外鍵擋下()
     {
         using var db = new TestDb();

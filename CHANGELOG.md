@@ -38,6 +38,11 @@
   也會存檔**(patch)。這兩支直接改追蹤中的 `Label` 屬性,以前靠 `SaveChanges` 自己偵測變更;關掉之後改名、
   改欄位都靜默地沒有寫進資料庫,並發戳記也沒輪換。現在存檔前會偵測這個標籤自己的變更。
   不會替你偵測其他實體——哪些未存變更跟著送出,仍照你的設定。
+- **`AttachAsync`／`AttachManyAsync` 自動建立標籤前,先驗證完所有要建立的名稱**(patch)。以前逐一「查詢、驗證、
+  建立、存檔」,`AttachAsync(note, "ok", <65 字的名稱>)` 拋 `ArgumentException` 時,`ok` 已經建立並存檔,
+  那次存檔還一起送出了 context 裡其他未存的變更。現在先查完全部名稱、驗證完要建立的名稱,才開始寫入;
+  參數不合法就什麼都不建立、不存檔。`AutoCreateLabels = false` 的行為不變(缺的名稱照舊一次列出,不做長度檢查)。
+  例外型別與訊息不變。
 
 ### Changed
 - **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**

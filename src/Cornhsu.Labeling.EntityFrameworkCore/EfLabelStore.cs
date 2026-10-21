@@ -496,62 +496,93 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
     /// <summary>
     /// 依名稱取得標籤;不存在時依 <see cref="LabelRegistry.AutoCreateLabels"/> 決定自動建立或拋例外。
-    /// 同名競態(unique index 撞擊)以重讀處理。
+    /// 先全部查過、驗證完要建立的名稱,才開始寫入:參數錯誤不能等到前面的標籤已經存檔才發現
+    /// (那次存檔還會一起送出消費端 context 裡其他未存的變更)。
     /// </summary>
     private async Task<List<Label>> GetOrCreateLabelsAsync(IEnumerable<string> labelNames, CancellationToken ct)
     {
-        var result = new List<Label>();
+        var names = NormalizeMany(labelNames);
+
+        // 第一輪只查不寫
+        var found = new Label?[names.Count];
         var missing = new List<string>();
-        foreach (var name in NormalizeMany(labelNames))
+        for (var i = 0; i < names.Count; i++)
         {
-            var label = await _db.Set<Label>().FirstOrDefaultAsync(l => l.Name == name, ct).ConfigureAwait(false);
+            var name = names[i];
+            found[i] = await _db.Set<Label>().FirstOrDefaultAsync(l => l.Name == name, ct).ConfigureAwait(false);
+            if (found[i] is null)
+                missing.Add(name);
+        }
+
+        if (missing.Count > 0 && !_registry.AutoCreateLabels)
+            throw new InvalidOperationException(   // 收集完所有缺的,一次報清楚
+                $"label(s) {string.Join(", ", missing.Select(m => $"'{m}'"))} do not exist and AutoCreateLabels is disabled. " +
+                $"Create them with CreateAsync first (optionally with a color and icon), or set LabelRegistry.AutoCreateLabels back to true.");
+        foreach (var name in missing)
+            ValidateNameLength(name);
+
+        // 第二輪才建立,每個新標籤各自存檔
+        var result = new List<Label>(names.Count);
+        var createdAny = false;
+        for (var i = 0; i < names.Count; i++)
+        {
+            if (found[i] is { } existing)
+            {
+                result.Add(existing);
+                continue;
+            }
+
+            // 不分大小寫的 collation 上,同一批裡只差大小寫的名稱(如 "Paper"、"paper")是同一個標籤:
+            // 這一批已經建過標籤的話先重查,沿用剛建好的那筆,不要等撞上唯一索引才發現
+            var label = createdAny
+                ? await _db.Set<Label>().FirstOrDefaultAsync(l => l.Name == names[i], ct).ConfigureAwait(false)
+                : null;
             if (label is null)
             {
-                if (!_registry.AutoCreateLabels)
-                {
-                    missing.Add(name);   // 先收集完所有缺的,一次報清楚
-                    continue;
-                }
-
-                ValidateNameLength(name);
-                label = new Label
-                {
-                    Id = Guid.NewGuid(),
-                    Name = name,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    ConcurrencyStamp = Guid.NewGuid(),
-                };
-                _db.Set<Label>().Add(label);
-                try
-                {
-                    await _db.SaveChangesAsync(ct).ConfigureAwait(false);
-                    _logger.LogInformation(
-                        "auto-created label '{Name}' while attaching (AutoCreateLabels is on; curated-label apps should set it to false)", name);
-                }
-                catch (DbUpdateException)
-                {
-                    // 可能是同名競態(另一條執行路徑剛建立了同名標籤、撞上 unique index)。
-                    // 重讀驗證:真的有同名標籤 → 用既有那筆;沒有 → 不是競態,原例外照拋。
-                    _db.Entry(label).State = EntityState.Detached;
-                    var winner = await _db.Set<Label>()
-                        .FirstOrDefaultAsync(l => l.Name == name, ct).ConfigureAwait(false);
-                    if (winner is null) throw;
-                    label = winner;
-                }
-                catch
-                {
-                    _db.Entry(label).State = EntityState.Detached;   // 取消等其他失敗:同樣不留下新增中的標籤
-                    throw;
-                }
+                label = await CreateForAttachAsync(names[i], ct).ConfigureAwait(false);
+                createdAny = true;
             }
             result.Add(label);
         }
 
-        if (missing.Count > 0)
-            throw new InvalidOperationException(
-                $"label(s) {string.Join(", ", missing.Select(m => $"'{m}'"))} do not exist and AutoCreateLabels is disabled. " +
-                $"Create them with CreateAsync first (optionally with a color and icon), or set LabelRegistry.AutoCreateLabels back to true.");
-
         return result;
+    }
+
+    /// <summary>
+    /// 貼標時自動建立一個標籤並存檔。同名競態(unique index 撞擊)以重讀處理:
+    /// 重讀得到同名標籤 → 用既有那筆;讀不到 → 不是競態,原例外照拋。
+    /// </summary>
+    private async Task<Label> CreateForAttachAsync(string name, CancellationToken ct)
+    {
+        var label = new Label
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            CreatedAt = DateTimeOffset.UtcNow,
+            ConcurrencyStamp = Guid.NewGuid(),
+        };
+        _db.Set<Label>().Add(label);
+        try
+        {
+            await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+            _logger.LogInformation(
+                "auto-created label '{Name}' while attaching (AutoCreateLabels is on; curated-label apps should set it to false)", name);
+            return label;
+        }
+        catch (DbUpdateException)
+        {
+            // 可能是同名競態(另一條執行路徑剛建立了同名標籤、撞上 unique index)。
+            // 重讀驗證:真的有同名標籤 → 用既有那筆;沒有 → 不是競態,原例外照拋。
+            _db.Entry(label).State = EntityState.Detached;
+            var winner = await _db.Set<Label>()
+                .FirstOrDefaultAsync(l => l.Name == name, ct).ConfigureAwait(false);
+            if (winner is null) throw;
+            return winner;
+        }
+        catch
+        {
+            _db.Entry(label).State = EntityState.Detached;   // 取消等其他失敗:同樣不留下新增中的標籤
+            throw;
+        }
     }
 }

@@ -37,6 +37,19 @@ public class CaseSensitivityTests
     }
 
     [Fact]
+    public async Task 不分大小寫的collation上_同一批貼標裡只差大小寫的新名稱_只建一個標籤()
+    {
+        using var db = new CaseInsensitiveDb();
+        var note = await db.AddNoteAsync();
+
+        await db.Store.AttachAsync(note, "Paper", "paper");
+        await db.Store.AttachManyAsync(new[] { note }, new[] { "URGENT", "urgent" });
+
+        (await db.Store.GetAllAsync()).Select(l => l.Name).Should().BeEquivalentTo(new[] { "Paper", "URGENT" });
+        (await db.Store.GetLabelsOfAsync(note)).Should().HaveCount(2);
+    }
+
+    [Fact]
     public async Task 名稱保留原始大小寫_不做大小寫正規化()
     {
         using var db = new TestDb();

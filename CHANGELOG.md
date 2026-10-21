@@ -42,8 +42,9 @@
   例外型別與訊息不變。
 - **context 關掉自動偵測變更(`ChangeTracker.AutoDetectChangesEnabled = false`)時,`RenameAsync`／`UpdateAsync`
   也會存檔**(patch)。這兩支直接改追蹤中的 `Label` 屬性,以前靠 `SaveChanges` 自己偵測變更;關掉之後改名、
-  改欄位都靜默地沒有寫進資料庫,並發戳記也沒輪換。現在存檔前會偵測這個標籤自己的變更。
-  不會替你偵測其他實體——哪些未存變更跟著送出,仍照你的設定。
+  改欄位都靜默地沒有寫進資料庫,並發戳記也沒輪換。現在存檔前會偵測標籤的變更:`RenameAsync` 只偵測它改的
+  那個標籤;`UpdateAsync` 會偵測追蹤中的每一個標籤(lambda 可能經導覽屬性動到別的標籤,循環檢查要看得到),
+  所以你自己對其他標籤做、還沒偵測的修改,也會被這次存檔一起送出。其他型別的實體不會替你偵測。
 - **`AttachAsync`／`AttachManyAsync` 自動建立標籤前,先驗證完所有要建立的名稱**(patch)。以前逐一「查詢、驗證、
   建立、存檔」,`AttachAsync(note, "ok", <65 字的名稱>)` 拋 `ArgumentException` 時,`ok` 已經建立並存檔,
   那次存檔還一起送出了 context 裡其他未存的變更。現在先查完全部名稱、驗證完要建立的名稱,才開始寫入;

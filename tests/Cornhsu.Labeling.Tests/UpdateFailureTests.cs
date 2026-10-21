@@ -252,6 +252,25 @@ public class UpdateFailureTests
     }
 
     [Fact]
+    public async Task 自動偵測變更關掉時_UpdateAsync偵測每個追蹤中的標籤_但不替消費端偵測其他型別的實體()
+    {
+        using var db = new TestDb();
+        var a = await db.Store.CreateAsync("a");
+        var b = await db.Store.CreateAsync("b");
+        var note = await db.AddNoteAsync("原標題");
+        db.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+        a.Color = "#123456";          // 消費端對另一個標籤的修改,沒有偵測
+        note.Title = "改過的標題";    // 消費端對別的型別的修改,沒有偵測
+
+        await db.Store.UpdateAsync(b.Id, l => l.SortOrder = 1);
+
+        // lambda 可能經導覽屬性動到別的標籤,循環檢查要看得到,所以每個追蹤中的標籤都會偵測、跟著送出
+        (await StoredAsync(db, a.Id)).Color.Should().Be("#123456");
+        using var other = db.CreateSecondContext();
+        (await other.Notes.AsNoTracking().SingleAsync(n => n.Id == note.Id)).Title.Should().Be("原標題");
+    }
+
+    [Fact]
     public async Task 自動偵測變更關掉時_RenameAsync與UpdateAsync仍會存檔_戳記照常輪換()
     {
         using var db = new TestDb();

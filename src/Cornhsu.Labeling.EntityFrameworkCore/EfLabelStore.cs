@@ -77,6 +77,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         // 連結存的是 Id,改名是一次 O(1) 的 UPDATE,不需要任何 cascade
         var undo = new TrackerSnapshot(_db);
         undo.Capture(_db.Entry(label));
+        undo.Own(label);
         label.Name = normalized;
         label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
         _db.Entry(label).DetectChanges();          // 消費端關掉自動偵測變更時,SaveChanges 不會自己發現這兩個欄位改了
@@ -100,6 +101,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             snapshot.Capture(entry);
             parentsBefore[entry.Entity] = entry.Entity.ParentId;
         }
+        snapshot.Own(label);
 
         // 名稱要不要驗證,比的是資料庫裡的名稱:存檔會寫入的名稱只要跟它不同就要驗
         var storedName = _db.Entry(label).Property(l => l.Name).OriginalValue;
@@ -165,6 +167,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         // 先記下:直接參照這個標籤的項目連值一起記,其餘只記狀態(多層 cascade 也放得回去)
         var undo = new TrackerSnapshot(_db);
         undo.Capture(_db.Entry(label));
+        undo.Own(label);
         var tracked = _db.ChangeTracker.Entries().ToList();
         foreach (var entry in tracked.Where(e => ReferencesLabel(e, labelId)))
             undo.Capture(entry);
@@ -460,13 +463,13 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     }
 
     /// <summary>
-    /// 並發衝突之後,把 store 這次動過、而且衝突的項目重讀成資料庫的值(已被別人刪掉的會變成 detached),
-    /// 同一個 store 接著重讀、重試才拿得到新值。消費端自己的項目不碰。
+    /// 並發衝突之後,把衝突的項目裡 store 可以負責的那些重讀成資料庫的值(已被別人刪掉的會變成 detached),
+    /// 同一個 store 接著重讀、重試才拿得到新值。消費端自己改過、還沒存的項目不碰(見 <see cref="TrackerSnapshot.MayReload"/>)。
     /// </summary>
     private static async Task ReloadConflictsAsync(Exception ex, TrackerSnapshot undo)
     {
         if (ex is not DbUpdateConcurrencyException conflict) return;
-        foreach (var entry in conflict.Entries.Where(e => undo.Covers(e.Entity)).ToList())
+        foreach (var entry in conflict.Entries.Where(e => undo.MayReload(e.Entity)).ToList())
         {
             try
             {
@@ -534,12 +537,13 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
             // 不分大小寫的 collation 上,同一批裡只差大小寫的名稱(如 "Paper"、"paper")是同一個標籤:
             // 這一批已經建過標籤的話先重查,沿用剛建好的那筆,不要等撞上唯一索引才發現
+            var name = names[i];
             var label = createdAny
-                ? await _db.Set<Label>().FirstOrDefaultAsync(l => l.Name == names[i], ct).ConfigureAwait(false)
+                ? await _db.Set<Label>().FirstOrDefaultAsync(l => l.Name == name, ct).ConfigureAwait(false)
                 : null;
             if (label is null)
             {
-                label = await CreateForAttachAsync(names[i], ct).ConfigureAwait(false);
+                label = await CreateForAttachAsync(name, ct).ConfigureAwait(false);
                 createdAny = true;
             }
             result.Add(label);

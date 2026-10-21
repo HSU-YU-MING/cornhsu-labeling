@@ -15,6 +15,7 @@ internal sealed class TrackerSnapshot
     private readonly List<Item> _items = new();
     private readonly HashSet<object> _captured = new(ReferenceEqualityComparer.Instance);
     private readonly List<object> _added = new();
+    private readonly HashSet<object> _owned = new(ReferenceEqualityComparer.Instance);
 
     private sealed record Item(EntityEntry Entry, EntityState State, PropertyValues? Values, HashSet<string>? Modified);
 
@@ -34,9 +35,17 @@ internal sealed class TrackerSnapshot
     /// <summary>記下 store 自己新加進追蹤器的實體;還原時 detach。</summary>
     public void Added(object entity) => _added.Add(entity);
 
-    /// <summary>這個實體是不是 store 這次動過的(記下的,或新加的)。</summary>
-    public bool Covers(object entity)
-        => _captured.Contains(entity) || _added.Any(a => ReferenceEquals(a, entity));
+    /// <summary>標明這個實體是這次呼叫要寫的對象(例如 UpdateAsync 的那個標籤);並發衝突時一律重讀。</summary>
+    public void Own(object entity) => _owned.Add(entity);
+
+    /// <summary>
+    /// 並發衝突之後能不能把這個實體重讀成資料庫的值:這次呼叫的對象、store 新加的,
+    /// 或記下時沒有未存變更(Unchanged)的才行。消費端自己改過、還沒存的項目不重讀,免得替他丟掉修改。
+    /// </summary>
+    public bool MayReload(object entity)
+        => _owned.Contains(entity)
+           || _added.Any(a => ReferenceEquals(a, entity))
+           || _items.Any(i => ReferenceEquals(i.Entry.Entity, entity) && i.State == EntityState.Unchanged);
 
     /// <summary>
     /// 還原:store 新加的實體 detach;<paramref name="detachUncapturedOf"/> 型別裡沒被記下的項目

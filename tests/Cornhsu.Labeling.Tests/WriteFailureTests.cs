@@ -87,6 +87,29 @@ public class WriteFailureTests
     }
 
     [Fact]
+    public async Task 並發衝突出在消費端自己改過的別的標籤上_store不重讀它_消費端的修改原樣保留()
+    {
+        using var db = new TestDb();
+        var mine = await db.Store.CreateAsync("我改的");
+        var target = await db.Store.CreateAsync("要更新的");
+        using (var other = db.CreateSecondContext())
+        {
+            var stale = await other.Set<Label>().SingleAsync(l => l.Id == mine.Id);
+            stale.Color = "#000000";
+            stale.ConcurrencyStamp = Guid.NewGuid();
+            await other.SaveChangesAsync();   // 資料庫裡 mine 的戳記已輪換,db.Context 手上的是舊的
+        }
+        mine.Color = "#FFFFFF";   // 消費端自己對追蹤中的標籤做的修改,還沒存
+
+        var act = () => db.Store.UpdateAsync(target.Id, l => l.SortOrder = 5);
+        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+
+        mine.Color.Should().Be("#FFFFFF", "衝突的是消費端自己的修改,store 不能替他丟掉");
+        db.Context.Entry(mine).State.Should().Be(EntityState.Modified);
+        target.SortOrder.Should().Be(0, "store 自己這次的修改照樣撤掉");
+    }
+
+    [Fact]
     public async Task RenameAsync並發衝突後_同一個store重讀拿到資料庫的值_重試成功()
     {
         using var db = new TestDb();

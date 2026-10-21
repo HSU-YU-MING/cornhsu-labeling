@@ -405,6 +405,24 @@ public class WriteFailureTests
     }
 
     [Fact]
+    public async Task UpdateAsync提交後才拋例外_一起提交的消費端修改不會又被標成待存()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var target = await db.Store.CreateAsync("目標");
+        var mine = await db.Store.CreateAsync("我的");
+        mine.SortOrder = 7;   // 消費端自己的未存修改:會跟著 UpdateAsync 的存檔一起提交
+
+        after.Armed = true;
+        var act = () => db.Store.UpdateAsync(target.Id, l => l.Color = "#FF0000");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        db.Context.Entry(mine).State.Should().Be(EntityState.Unchanged, "它已經跟著提交了,不能被還原成待存");
+        db.Context.ChangeTracker.HasChanges().Should().BeFalse();
+        (await StoredLabelsAsync(db)).Single(l => l.Id == mine.Id).SortOrder.Should().Be(7);
+    }
+
+    [Fact]
     public async Task RenameAsync提交後才拋例外_已提交的名稱不會被之後的存檔蓋回去()
     {
         var after = new ThrowAfterSave();

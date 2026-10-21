@@ -32,6 +32,8 @@ public class LinkContractTests
         links.Should().HaveCount(5);
         foreach (var link in links)
         {
+            // Offset 斷言只在非 UTC 時區的機器上分得出 UtcNow 與 Now(CI runner 是 UTC;Npgsql 讀回一律是 offset 0)。
+            // 「漏了賦值」這類回歸由下面的時間窗斷言負責,在任何時區都抓得到。
             link.AttachedAt.Offset.Should().Be(TimeSpan.Zero, "貼標時間以 UTC 寫入");
             // PostgreSQL 只存到微秒,上下各留 1 ms 的餘裕
             link.AttachedAt.Should().BeOnOrAfter(before.AddMilliseconds(-1)).And.BeOnOrBefore(after.AddMilliseconds(1));

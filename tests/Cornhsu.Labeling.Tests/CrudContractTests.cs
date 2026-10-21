@@ -29,6 +29,8 @@ public class CrudContractTests
         stored.SortOrder.Should().Be(0);
         stored.ConcurrencyStamp.Should().NotBeEmpty("戳記從建立那一刻就要有值,並發檢查才有基準");
         stored.ConcurrencyStamp.Should().NotBe(parent.ConcurrencyStamp, "每個標籤各自一個戳記");
+        // Offset 斷言只在非 UTC 時區的機器上分得出 UtcNow 與 Now(CI runner 是 UTC;Npgsql 讀回一律是 offset 0)。
+        // 「漏了賦值」這類回歸由下面的時間窗斷言負責,在任何時區都抓得到。
         stored.CreatedAt.Offset.Should().Be(TimeSpan.Zero, "建立時間以 UTC 寫入");
         // PostgreSQL 只存到微秒,上下各留 1 ms 的餘裕
         stored.CreatedAt.Should().BeOnOrAfter(before.AddMilliseconds(-1)).And.BeOnOrBefore(after.AddMilliseconds(1));
@@ -58,6 +60,7 @@ public class CrudContractTests
             label.ParentId.Should().BeNull("自動建立的標籤一律在頂層");
             label.SortOrder.Should().Be(0);
             label.ConcurrencyStamp.Should().NotBeEmpty("戳記從建立那一刻就要有值,並發檢查才有基準");
+            // 與上一條測試相同:Offset 斷言只在非 UTC 時區有鑑別力,時間窗斷言才是各時區都守得住的那一條
             label.CreatedAt.Offset.Should().Be(TimeSpan.Zero, "建立時間以 UTC 寫入");
             // PostgreSQL 只存到微秒,上下各留 1 ms 的餘裕
             label.CreatedAt.Should().BeOnOrAfter(before.AddMilliseconds(-1)).And.BeOnOrBefore(after.AddMilliseconds(1));

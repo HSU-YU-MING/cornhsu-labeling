@@ -125,9 +125,13 @@ public class HierarchyTests
         await other.SaveChangesAsync();
     }
 
-    /// <summary>放到背景執行緒並設上限:走訪若陷入無限迴圈,測試是紅燈而不是整個測試回合卡住。</summary>
+    /// <summary>
+    /// 放到背景執行緒並設上限:走訪若陷入無限迴圈,測試是紅燈而不是整個測試回合卡住。
+    /// 正常路徑是毫秒級;上限取 10 秒,除了無限迴圈,也抓得到「有限但極長」的走訪
+    /// (例如步數計數器要溢位才跳出,實測約 25 秒),同時給 CI 留足餘裕。
+    /// </summary>
     private static Task<T> WithinTimeLimit<T>(Func<Task<T>> action)
-        => Task.Run(action).WaitAsync(TimeSpan.FromSeconds(30));
+        => Task.Run(action).WaitAsync(TimeSpan.FromSeconds(10));
 
     [Fact]
     public async Task 資料裡的階層已經成環_包含子孫的查詢仍會結束_每個實體只出現一次()
@@ -145,7 +149,7 @@ public class HierarchyTests
     }
 
     [Fact]
-    public async Task 資料裡的階層已經成環_把環外的標籤搬到環上_循環檢查仍會結束()
+    public async Task 資料裡的階層已經成環_把環外的標籤搬到環上_循環檢查會結束且照常完成搬移()
     {
         using var db = new TestDb();
         var paper = await db.Store.CreateAsync("論文");
@@ -153,7 +157,9 @@ public class HierarchyTests
         var outsider = await db.Store.CreateAsync("方法");
         await CorruptParentAsync(db, paper.Id, review.Id);   // 論文 ⇄ 文獻回顧
 
-        // 沿祖先鏈往上走永遠碰不到「方法」自己:要靠步數上限跳出,讓這次與環無關的搬移照常完成
+        // 沿祖先鏈往上走永遠碰不到「方法」自己:要靠步數上限跳出(EnsureNoCycleAsync 註解所述的防呆 break)。
+        // 跳出後照常完成搬移是目前刻意的行為:這次搬移本身不會造成新的環,環是資料先壞掉的。
+        // 這條測試的核心是「在時限內結束」;若日後決定在資料已成環時改拋清楚的例外,改的是下面那條 ParentId 斷言。
         await WithinTimeLimit(() => db.Store.UpdateAsync(outsider.Id, l => l.ParentId = paper.Id));
 
         using var other = db.CreateSecondContext();

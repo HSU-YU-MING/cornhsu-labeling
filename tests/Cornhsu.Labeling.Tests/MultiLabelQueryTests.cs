@@ -94,6 +94,8 @@ public class MultiLabelQueryTests
         (await (await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All)).Select(n => n.Id).ToListAsync())
             .Should().Equal(all3.Id);
 
+        // 以下是對照組:Any 的語意本身已由 Any_命中任一標籤都撈到_同實體不重複 涵蓋,
+        // 這裡只確認同一份資料換成 Any 時,第三組照樣算數(「只有第三個」也要撈到)
         (await db.Store.FindByLabelsAsync(names, LabelMatch.Any)).Select(h => h.DisplayName)
             .Should().BeEquivalentTo(new[] { "三個都有", "缺第三個", "只有第三個" });
         (await (await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.Any)).Select(n => n.Id).ToListAsync())

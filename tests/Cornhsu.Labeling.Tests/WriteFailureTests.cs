@@ -65,6 +65,23 @@ public class WriteFailureTests
         (await db.Store.GetLabelsOfAsync(note)).Should().ContainSingle().Which.Id.Should().Be(rival.WinnerId!.Value);
     }
 
+    // ---- RenameAsync 非並發的存檔失敗 ----
+
+    [Fact]
+    public async Task RenameAsync存檔失敗後_新名字不會在之後的存檔落地()
+    {
+        var failure = new FailOnce(c => c.ChangeTracker.Entries<Label>().Any(e => e.State == EntityState.Modified));
+        using var db = new TestDb(null, failure);
+        var label = await db.Store.CreateAsync("原名");
+
+        var act = () => db.Store.RenameAsync(label.Id, "新名");
+        (await act.Should().ThrowAsync<DbUpdateException>()).Which.Should().BeSameAs(failure.Thrown);
+
+        label.Name.Should().Be("原名");
+        await db.AddNoteAsync();   // 消費端無關的存檔
+        (await StoredLabelsAsync(db)).Single().Name.Should().Be("原名");
+    }
+
     // ---- UpdateAsync / RenameAsync / DeleteAsync 的並發衝突:接住、重讀、重試 ----
 
     [Fact]

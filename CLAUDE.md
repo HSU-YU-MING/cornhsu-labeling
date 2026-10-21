@@ -22,7 +22,7 @@ D:\擴充功能\nuget\Labeling\cornhsu-labeling\   ← 真正的 git repo 在這
 ## 指令
 
 - 建置：`dotnet build Cornhsu.Labeling.slnx`
-- 測試：`dotnet test`——178 條（主測試 161 + analyzer 17）。動了 `src/` 的任何東西**必跑**。
+- 測試：`dotnet test`——223 條（主測試 203 + analyzer 20）。動了 `src/` 的任何東西**必跑**。
   預設走 **SQLite in-memory**，秒級。
 - 換 provider 跑同一套測試（環境變數，見 `tests/.../TestInfrastructure.cs`）：
 

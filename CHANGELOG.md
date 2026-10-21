@@ -3,7 +3,9 @@
 ## [未發佈]
 
 **產品 bug 修正。** 公開 API 的簽章、資料庫 schema、相依樓地板都沒有變。
-每一條後面標了它單獨算的 semver;整版取最高的那一條。
+每一條後面標了它單獨算的 semver;整版取最高的那一條:**minor**——`CHSU001` 對巢狀與泛型型別的訊息文字,
+以及 `AddLabeling`／`ApplyLabelModel` 的 null 參數從 `NullReferenceException` 改成 `ArgumentNullException`,
+都是有人可能在斷言、在 grep 的對外可見改動。其餘都是 patch。
 
 ### Fixed
 - **`UpdateAsync` 被擋下時會還原 lambda 做的修改**(patch)。lambda 改的是 DbContext 追蹤中的實體,
@@ -74,7 +76,7 @@
   推導規則不變(改它會換表名,是 major)。
 - **README 與 `LabelRegistry.Labelable` 的 XML 寫明泛型實體一定要釘 `typeKey`**(patch,只改文件)。
   沒釘的話預設取 CLR 名稱,`Box<int>` 得到 ``Box`1``:連結表名帶反引號,而且所有 `Box<…>` 共用這個鍵,
-  第二個建構型別註冊時拋 "TypeKey 'Box`1' is already registered."。推導規則與例外訊息都不變。
+  第二個建構型別註冊時拋 ``TypeKey 'Box`1' is already registered.``。推導規則與例外訊息都不變。
 - **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**
   (patch,只改文件)。這四支在記憶體以 Ordinal(區分大小寫)比對名稱,不跟資料庫 collation 走;
   `FindAsync`、貼標、撕標則在資料庫端比對。在不分大小寫的 collation 上(例如 SQL Server 預設),

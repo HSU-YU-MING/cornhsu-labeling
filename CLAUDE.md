@@ -133,7 +133,8 @@ README 的 Design trade-offs 已經完整寫了「為什麼是每型別一張連
 反過來，**失敗時只撤掉 store 自己的變更**：每個寫入方法動追蹤器之前先記一份 `TrackerSnapshot`，
 驗證或存檔失敗就還原（新加的 detach、改過或刪掉的放回原值與原狀態），並發衝突再把衝突的項目重讀
 （README 教的「接住、重讀、重試」靠這個才成立）——只重讀這次呼叫的對象、store 新加的、或原本沒有未存變更的項目
-（`TrackerSnapshot.MayReload`），消費端自己改過還沒存的不重讀。`DeleteAsync` 會連 EF 當下 cascade 掉的連結、
+（`TrackerSnapshot.MayReload`），消費端自己改過還沒存的不重讀。**這次呼叫的對象（`Own`）例外**：它一律重讀，
+連消費端自己對它的未存修改也丟掉，不然舊戳記留著、重試永遠失敗——這是刻意的，README 有寫，`WriteFailureTests` 釘著。`DeleteAsync` 會連 EF 當下 cascade 掉的連結、
 被設成 null 的外鍵一起記。新增寫入路徑時照這個形狀走，**不要改成 `ChangeTracker.Clear()` 或整批 Reload**
 ——那會把消費端自己還沒存的變更一起丟掉，而 QuillNest 這類 App 的 context 是整個程式共用一個。
 

@@ -405,8 +405,11 @@ with network latency the difference is 49 round trips.
   on every modification through the store. It does not rely on any database feature, so behaviour
   is identical across providers. When two callers modify the same label, the one that saves second
   gets a `DbUpdateConcurrencyException` instead of silently overwriting — catch it, then re-read
-  and retry or prompt the user. The store reloads the conflicting label before the exception
-  reaches you, so re-reading through the same store (and context) returns the database's values.
+  and retry or prompt the user. Before the exception reaches you, the store reloads the label it was
+  writing from the database, so re-reading through the same store (and context) returns the
+  database's values and a retry can succeed. That reload also drops any changes you had made to that
+  label yourself and not saved yet; if the conflict is on something else you had changed yourself,
+  the store leaves it alone.
 - **Tested against SQLite, SQL Server and PostgreSQL** (the same test suite, on every CI run, with
   EF Core 8; the EF Core 9 and 10 runs use SQLite only). Note that name case semantics vary with
   collation, apart from the exception described above.
@@ -415,7 +418,8 @@ with network latency the difference is 49 round trips.
   sharing a DbContext with the application; if you need isolation, call the store from a separate
   DbContext scope. When a write method throws — a rejected update or a failed save — it first takes
   back the changes it made to the context, so they are not saved later by accident and the context
-  stays usable; your own pending changes are left as they were.
+  stays usable. Your own pending changes are left as they were, with one exception: after a
+  concurrency conflict, the label being written is reloaded (see the previous point).
 - **EF Core 8+ only.** The dependency floor is 8.0.11 (the 8.0-series version with known
   vulnerability advisories patched); consumers on EF Core 9 or 10 unify automatically.
 - For tests, use **SQLite in-memory rather than the EF InMemory provider** — the latter does not

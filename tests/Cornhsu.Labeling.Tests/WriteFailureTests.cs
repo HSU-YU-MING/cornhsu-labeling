@@ -103,6 +103,72 @@ public class WriteFailureTests
         (await StoredLabelsAsync(db)).Single().Color.Should().Be("#00FF00");
     }
 
+    /// <summary>從另一個 context 改這個標籤並輪換戳記:db.Context 手上的就成了舊戳記。</summary>
+    private static async Task ChangeElsewhereAsync(TestDb db, Guid labelId)
+    {
+        using var other = db.CreateSecondContext();
+        var stored = await other.Set<Label>().SingleAsync(l => l.Id == labelId);
+        stored.Icon = "別處改的";
+        stored.ConcurrencyStamp = Guid.NewGuid();
+        await other.SaveChangesAsync();
+    }
+
+    // 刻意的取捨(README Limitations 寫明):並發衝突時,這次要寫的那個標籤一律重讀成資料庫的值,
+    // 連消費端自己對它還沒存的修改也一起丟掉——不重讀的話,舊戳記留在追蹤器裡,重試永遠撞同一個衝突。
+    // 別的項目上消費端自己的未存修改則不碰(見下一條之後的那條)。
+
+    [Fact]
+    public async Task UpdateAsync並發衝突時_目標標籤上消費端自己的未存修改也被重讀掉_重試成功()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("目標");
+        await ChangeElsewhereAsync(db, label.Id);
+        label.Color = "#FFFFFF";   // 消費端自己對目標標籤的未存修改
+
+        var act = () => db.Store.UpdateAsync(label.Id, l => l.SortOrder = 5);
+        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+
+        label.Color.Should().BeNull("目標標籤重讀成資料庫的值");
+        label.Icon.Should().Be("別處改的");
+        db.Context.Entry(label).State.Should().Be(EntityState.Unchanged);
+        await db.Store.UpdateAsync(label.Id, l => l.SortOrder = 5);
+        (await StoredLabelsAsync(db)).Single().SortOrder.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task RenameAsync並發衝突時_目標標籤上消費端自己的未存修改也被重讀掉_重試成功()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("原名");
+        await ChangeElsewhereAsync(db, label.Id);
+        label.Color = "#FFFFFF";
+
+        var act = () => db.Store.RenameAsync(label.Id, "新名");
+        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+
+        label.Color.Should().BeNull();
+        label.Name.Should().Be("原名");
+        await db.Store.RenameAsync(label.Id, "新名");
+        (await StoredLabelsAsync(db)).Single().Name.Should().Be("新名");
+    }
+
+    [Fact]
+    public async Task DeleteAsync並發衝突時_目標標籤上消費端自己的未存修改也被重讀掉_重試成功()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("論文");
+        await ChangeElsewhereAsync(db, label.Id);
+        label.Color = "#FFFFFF";
+
+        var act = () => db.Store.DeleteAsync(label.Id);
+        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+
+        label.Color.Should().BeNull();
+        db.Context.Entry(label).State.Should().Be(EntityState.Unchanged);
+        await db.Store.DeleteAsync(label.Id);
+        (await StoredLabelsAsync(db)).Should().BeEmpty();
+    }
+
     [Fact]
     public async Task 並發衝突出在消費端自己改過的別的標籤上_store不重讀它_消費端的修改原樣保留()
     {

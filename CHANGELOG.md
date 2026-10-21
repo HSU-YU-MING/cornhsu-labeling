@@ -25,6 +25,15 @@
   非同步運算子與續接的 Where/OrderBy/Skip 都照常可用。回傳型別仍是 `IQueryable<T>`;
   README 以前建議的 `query is IAsyncEnumerable<T>` 判斷現在永遠為 true,留著也不會壞,可以拿掉。
   README 的對應限制段已移除。
+- **寫入方法存檔失敗時,撤掉自己放進 DbContext 的變更**(patch)。store 直接呼叫你的 context 的
+  `SaveChangesAsync`,以前失敗就把例外往外丟,自己加進追蹤器的東西原封不動留著:`CreateAsync` 輸掉同名競態
+  (或 SQL Server／PostgreSQL 上 `Color`／`Icon` 超長)之後,那筆新增中的標籤讓之後每一次存檔都撞同一個錯;
+  `AttachAsync` 的連結違反外鍵之後也一樣;`UpdateAsync`／`RenameAsync` 拋並發例外之後,同一個 store 重讀
+  拿到的是沒存進去的值,重試也永遠失敗——README 教的「接住、重讀、重試」在同一個 scope 裡做不到。
+  現在 `CreateAsync`、`RenameAsync`、`UpdateAsync`、`DeleteAsync`、`AttachAsync`、`AttachManyAsync`、
+  `DetachAsync` 與自動建立標籤那一步失敗時,都會先還原自己動過的項目(`DeleteAsync` 連 EF 當下 cascade 掉的
+  連結、被設成 null 的外鍵一起還原),遇到並發衝突再把衝突的標籤或連結從資料庫重讀,然後原例外照拋。
+  你自己在同一個 context 裡還沒存的變更不會被動到。例外型別與訊息不變。
 
 ### Changed
 - **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**

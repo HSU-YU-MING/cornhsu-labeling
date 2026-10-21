@@ -54,7 +54,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
             .ToDictionaryAsync(x => x.Key, x => x.Count, ct).ConfigureAwait(false);
 
     public async Task AddMissingLinksAsync(
-        DbContext db, ILabelable entity, IReadOnlyList<Label> labels, CancellationToken ct)
+        DbContext db, ILabelable entity, IReadOnlyList<Label> labels, TrackerSnapshot undo, CancellationToken ct)
     {
         var id = ((TEntity)entity).Id;
         var links = db.Set<LabelLink<TEntity, TKey>>();
@@ -65,17 +65,19 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
             var existing = await links.FindAsync(new object[] { label.Id, id }, ct).ConfigureAwait(false);
             if (existing is not null) continue;
 
-            links.Add(new LabelLink<TEntity, TKey>
+            var link = new LabelLink<TEntity, TKey>
             {
                 LabelId = label.Id,
                 EntityId = id,
                 AttachedAt = DateTimeOffset.UtcNow,
-            });
+            };
+            links.Add(link);
+            undo.Added(link);
         }
     }
 
     public async Task AddMissingLinksManyAsync(
-        DbContext db, IReadOnlyList<ILabelable> entities, IReadOnlyList<Label> labels, CancellationToken ct)
+        DbContext db, IReadOnlyList<ILabelable> entities, IReadOnlyList<Label> labels, TrackerSnapshot undo, CancellationToken ct)
     {
         var typed = entities.Cast<TEntity>().ToList();
         var entityIds = typed.Select(e => e.Id).Distinct().ToList();
@@ -95,18 +97,20 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
             foreach (var label in labels)
             {
                 if (!have.Add((label.Id, entity.Id))) continue;   // 已存在或本批已加 → 略過(冪等)
-                links.Add(new LabelLink<TEntity, TKey>
+                var link = new LabelLink<TEntity, TKey>
                 {
                     LabelId = label.Id,
                     EntityId = entity.Id,
                     AttachedAt = now,
-                });
+                };
+                links.Add(link);
+                undo.Added(link);
             }
         }
     }
 
     public async Task RemoveLinksAsync(
-        DbContext db, ILabelable entity, IReadOnlyCollection<Guid> labelIds, CancellationToken ct)
+        DbContext db, ILabelable entity, IReadOnlyCollection<Guid> labelIds, TrackerSnapshot undo, CancellationToken ct)
     {
         var id = ((TEntity)entity).Id;
         var links = db.Set<LabelLink<TEntity, TKey>>();
@@ -114,7 +118,9 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         foreach (var labelId in labelIds)
         {
             var link = await links.FindAsync(new object[] { labelId, id }, ct).ConfigureAwait(false);
-            if (link is not null) links.Remove(link);
+            if (link is null) continue;
+            undo.Capture(db.Entry(link), withValues: false);
+            links.Remove(link);
         }
     }
 

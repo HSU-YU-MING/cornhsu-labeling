@@ -34,6 +34,10 @@ internal sealed class TrackerSnapshot
     /// <summary>記下 store 自己新加進追蹤器的實體;還原時 detach。</summary>
     public void Added(object entity) => _added.Add(entity);
 
+    /// <summary>這個實體是不是 store 這次動過的(記下的,或新加的)。</summary>
+    public bool Covers(object entity)
+        => _captured.Contains(entity) || _added.Any(a => ReferenceEquals(a, entity));
+
     /// <summary>
     /// 還原:store 新加的實體 detach;<paramref name="detachUncapturedOf"/> 型別裡沒被記下的項目
     /// (例如 UpdateAsync 的 lambda 經導覽屬性帶進追蹤器的新標籤)也 detach;

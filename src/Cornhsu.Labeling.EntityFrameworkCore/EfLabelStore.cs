@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -39,8 +40,10 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             CreatedAt = DateTimeOffset.UtcNow,
             ConcurrencyStamp = Guid.NewGuid(),
         };
+        var undo = new TrackerSnapshot(_db);
         _db.Set<Label>().Add(label);
-        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        undo.Added(label);
+        await SaveOrRestoreAsync(undo, null, ct).ConfigureAwait(false);
         _logger.LogDebug("created label '{Name}' (Id: {Id})", label.Name, label.Id);
         return label;
     }
@@ -72,9 +75,11 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             throw new InvalidOperationException($"label name '{normalized}' is already taken.");
 
         // 連結存的是 Id,改名是一次 O(1) 的 UPDATE,不需要任何 cascade
+        var undo = new TrackerSnapshot(_db);
+        undo.Capture(_db.Entry(label));
         label.Name = normalized;
         label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
-        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await SaveOrRestoreAsync(undo, null, ct).ConfigureAwait(false);
     }
 
     public async Task<Label> UpdateAsync(Guid labelId, Action<Label> update, CancellationToken ct = default)
@@ -136,9 +141,10 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             await _db.SaveChangesAsync(ct).ConfigureAwait(false);
             return label;
         }
-        catch
+        catch (Exception ex)
         {
             snapshot.Restore(detachUncapturedOf: typeof(Label));
+            await ReloadConflictsAsync(ex, snapshot).ConfigureAwait(false);
             throw;
         }
     }
@@ -153,8 +159,18 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             throw new InvalidOperationException(
                 $"label '{label.Name}' still has children; delete or move them first. (The database also blocks this via a Restrict foreign key.)");
 
-        _db.Set<Label>().Remove(label);
-        await _db.SaveChangesAsync(ct).ConfigureAwait(false);   // 各型別的連結由 cascade delete 自動清除
+        // Remove 的當下 EF 就會 cascade:追蹤中的連結標成刪除、參照它的可為 null 外鍵設成 null。
+        // 先記下:直接參照這個標籤的項目連值一起記,其餘只記狀態(多層 cascade 也放得回去)
+        var undo = new TrackerSnapshot(_db);
+        undo.Capture(_db.Entry(label));
+        var tracked = _db.ChangeTracker.Entries().ToList();
+        foreach (var entry in tracked.Where(e => ReferencesLabel(e, labelId)))
+            undo.Capture(entry);
+        foreach (var entry in tracked)
+            undo.Capture(entry, withValues: false);
+
+        // 各型別的連結由 cascade delete 自動清除
+        await SaveOrRestoreAsync(undo, () => { _db.Set<Label>().Remove(label); return Task.CompletedTask; }, ct).ConfigureAwait(false);
         _logger.LogDebug("deleted label '{Name}' (Id: {Id})", label.Name, labelId);
     }
 
@@ -172,8 +188,8 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var descriptor = _registry.Require<T>();                      // 未註冊 → 清楚的例外
         var labels = await GetOrCreateLabelsAsync(labelNames, ct).ConfigureAwait(false);
 
-        await descriptor.AddMissingLinksAsync(_db, entity, labels, ct).ConfigureAwait(false);
-        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        var undo = new TrackerSnapshot(_db);
+        await SaveOrRestoreAsync(undo, () => descriptor.AddMissingLinksAsync(_db, entity, labels, undo, ct), ct).ConfigureAwait(false);
     }
 
     public async Task AttachManyAsync<T>(IEnumerable<T> entities, IEnumerable<string> labelNames, CancellationToken ct = default)
@@ -191,8 +207,8 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var labels = await GetOrCreateLabelsAsync(labelNames, ct).ConfigureAwait(false);
         if (labels.Count == 0) return;
 
-        await descriptor.AddMissingLinksManyAsync(_db, list, labels, ct).ConfigureAwait(false);
-        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        var undo = new TrackerSnapshot(_db);
+        await SaveOrRestoreAsync(undo, () => descriptor.AddMissingLinksManyAsync(_db, list, labels, undo, ct), ct).ConfigureAwait(false);
     }
 
     public Task DetachAsync<T>(T entity, params string[] labelNames) where T : class, ILabelable
@@ -215,8 +231,8 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             .ToListAsync(ct).ConfigureAwait(false);
         if (labelIds.Count == 0) return;
 
-        await descriptor.RemoveLinksAsync(_db, entity, labelIds, ct).ConfigureAwait(false);
-        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        var undo = new TrackerSnapshot(_db);
+        await SaveOrRestoreAsync(undo, () => descriptor.RemoveLinksAsync(_db, entity, labelIds, undo, ct), ct).ConfigureAwait(false);
     }
 
     public Task<IReadOnlyList<Label>> GetLabelsOfAsync<T>(T entity, CancellationToken ct = default)
@@ -419,6 +435,55 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         return groups.Count == 0 ? null : groups;
     }
 
+    /// <summary>
+    /// 在 <paramref name="undo"/> 的保護下做一段會動追蹤器的工作(<paramref name="mutate"/>,可省略),再呼叫消費端 context 的
+    /// SaveChangesAsync。中途或存檔失敗時,先把 store 這次放進追蹤器的變更撤掉,遇到並發衝突再把衝突的項目重讀成資料庫的值,
+    /// 然後原例外照拋。消費端的 context 常是長壽的:不撤掉的話,被拒絕的變更會留在追蹤器裡,
+    /// 之後每一次存檔都撞同一個錯,或讓同一個 store 重讀時拿到沒存進去的值。
+    /// </summary>
+    private async Task SaveOrRestoreAsync(TrackerSnapshot undo, Func<Task>? mutate, CancellationToken ct)
+    {
+        try
+        {
+            if (mutate is not null)
+                await mutate().ConfigureAwait(false);
+            await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            undo.Restore();
+            await ReloadConflictsAsync(ex, undo).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 並發衝突之後,把 store 這次動過、而且衝突的項目重讀成資料庫的值(已被別人刪掉的會變成 detached),
+    /// 同一個 store 接著重讀、重試才拿得到新值。消費端自己的項目不碰。
+    /// </summary>
+    private static async Task ReloadConflictsAsync(Exception ex, TrackerSnapshot undo)
+    {
+        if (ex is not DbUpdateConcurrencyException conflict) return;
+        foreach (var entry in conflict.Entries.Where(e => undo.Covers(e.Entity)).ToList())
+        {
+            try
+            {
+                await entry.ReloadAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // 重讀只是盡力而為:失敗就停在已還原的狀態,不能讓清理時的錯蓋掉原本的例外
+            }
+        }
+    }
+
+    /// <summary>這個追蹤中的項目是否以外鍵直接參照指定的標籤(連結、子標籤,或消費端自己參照標籤的實體)。</summary>
+    private static bool ReferencesLabel(EntityEntry entry, Guid labelId)
+        => entry.Metadata.GetForeignKeys().Any(fk =>
+            typeof(Label).IsAssignableFrom(fk.PrincipalEntityType.ClrType)
+            && fk.Properties.Count == 1
+            && Equals(entry.Property(fk.Properties[0].Name).CurrentValue, labelId));
+
     /// <summary>建立與改名時主動驗證名稱長度(SQLite 不強制 HasMaxLength,不能只靠資料庫)。</summary>
     private static void ValidateNameLength(string normalized)
     {
@@ -470,6 +535,11 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                         .FirstOrDefaultAsync(l => l.Name == name, ct).ConfigureAwait(false);
                     if (winner is null) throw;
                     label = winner;
+                }
+                catch
+                {
+                    _db.Entry(label).State = EntityState.Detached;   // 取消等其他失敗:同樣不留下新增中的標籤
+                    throw;
                 }
             }
             result.Add(label);

@@ -44,7 +44,7 @@ public class FactoryTests
         var registry = new LabelRegistry();
 
         var actContext = () => LabelStoreFactory.Create<TestDbContext>(null!, registry);
-        actContext.Should().Throw<ArgumentNullException>();
+        actContext.Should().Throw<ArgumentNullException>().Which.ParamName.Should().Be("context");
 
         using var conn = new SqliteConnection("DataSource=:memory:");
         conn.Open();
@@ -54,6 +54,6 @@ public class FactoryTests
         using var context = new TestDbContext(options, registry);
 
         var actRegistry = () => LabelStoreFactory.Create(context, null!);
-        actRegistry.Should().Throw<ArgumentNullException>();
+        actRegistry.Should().Throw<ArgumentNullException>().Which.ParamName.Should().Be("registry");
     }
 }

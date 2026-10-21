@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using Cornhsu.Labeling.Analyzers;
 using FluentAssertions;
 using Microsoft.CodeAnalysis;
@@ -144,5 +145,183 @@ public class AnalyzerTests
             """);
 
         diags.Should().BeEmpty();
+    }
+
+    // ---- 對外可見的描述子與訊息文字:改了算 minor,要寫進 CHANGELOG ----
+
+    [Fact]
+    public void 診斷描述子_ID嚴重度分類標題與說明連結()
+    {
+        new LabelableRegistrationAnalyzer().SupportedDiagnostics.Select(d => d.Id)
+            .Should().Equal("CHSU001", "CHSU002");
+
+        var notRegistered = LabelableRegistrationAnalyzer.NotRegistered;
+        notRegistered.Id.Should().Be("CHSU001");
+        notRegistered.Title.ToString(CultureInfo.InvariantCulture).Should().Be("Labelable type is not registered");
+        notRegistered.Category.Should().Be("Cornhsu.Labeling");
+        notRegistered.DefaultSeverity.Should().Be(DiagnosticSeverity.Warning);
+        notRegistered.IsEnabledByDefault.Should().BeTrue();
+        notRegistered.HelpLinkUri.Should().Be(
+            "https://github.com/HSU-YU-MING/cornhsu-labeling/blob/main/docs/analyzer-rules.md#chsu001");
+        notRegistered.CustomTags.Should().Contain(WellKnownDiagnosticTags.CompilationEnd);
+
+        var markerOnly = LabelableRegistrationAnalyzer.MarkerOnly;
+        markerOnly.Id.Should().Be("CHSU002");
+        markerOnly.Title.ToString(CultureInfo.InvariantCulture).Should().Be("Only the non-generic ILabelable marker is implemented");
+        markerOnly.Category.Should().Be("Cornhsu.Labeling");
+        markerOnly.DefaultSeverity.Should().Be(DiagnosticSeverity.Warning);
+        markerOnly.IsEnabledByDefault.Should().BeTrue();
+        markerOnly.HelpLinkUri.Should().Be(
+            "https://github.com/HSU-YU-MING/cornhsu-labeling/blob/main/docs/analyzer-rules.md#chsu002");
+        markerOnly.CustomTags.Should().Contain(WellKnownDiagnosticTags.CompilationEnd);
+    }
+
+    [Fact]
+    public async Task CHSU001_完整訊息文字_主鍵型別印metadata名稱_位置在型別名稱上()
+    {
+        var source = """
+            using System;
+            using Cornhsu.Labeling;
+
+            public class Note : ILabelable<int> { public int Id { get; set; } }
+            public class Memo : ILabelable<Guid> { public Guid Id { get; set; } }
+            """;
+        var diags = await AnalyzeAsync(source);
+
+        diags.Should().HaveCount(2).And.OnlyContain(d => d.Id == "CHSU001" && d.Severity == DiagnosticSeverity.Warning);
+        diags.Select(d => d.GetMessage(CultureInfo.InvariantCulture)).Should().BeEquivalentTo(
+            "Type 'Note' implements ILabelable<Int32>, but this compilation contains no r.Labelable<Note>() registration; " +
+            "attaching or querying it at run time will throw \"type is not registered\". " +
+            "Suppress this warning if the registration lives in another assembly.",
+            "Type 'Memo' implements ILabelable<Guid>, but this compilation contains no r.Labelable<Memo>() registration; " +
+            "attaching or querying it at run time will throw \"type is not registered\". " +
+            "Suppress this warning if the registration lives in another assembly.");
+        diags.Select(d => source.Substring(d.Location.SourceSpan.Start, d.Location.SourceSpan.Length))
+            .Should().BeEquivalentTo("Note", "Memo");
+    }
+
+    [Fact]
+    public async Task CHSU002_完整訊息文字()
+    {
+        var diags = await AnalyzeAsync("""
+            using Cornhsu.Labeling;
+
+            public class Broken : ILabelable { }
+            """);
+
+        diags.Should().ContainSingle().Which.Should().Match<Diagnostic>(d =>
+            d.Id == "CHSU002" && d.Severity == DiagnosticSeverity.Warning);
+        diags[0].GetMessage(CultureInfo.InvariantCulture).Should().Be(
+            "Type 'Broken' implements only the non-generic ILabelable; registering it will throw " +
+            "because the key type cannot be inferred. Implement ILabelable<TKey> instead " +
+            "(for example ILabelable<int> or ILabelable<Guid>).");
+    }
+
+    // ---- 判定邊界 ----
+
+    [Fact]
+    public async Task record_class與巢狀類別_有註冊不報_沒註冊照報()
+    {
+        var diags = await AnalyzeAsync("""
+            using Cornhsu.Labeling;
+            using Cornhsu.Labeling.EntityFrameworkCore;
+
+            public record Note(int Id) : ILabelable<int>;
+            public record Orphan(int Id) : ILabelable<int>;
+
+            public class Outer
+            {
+                public class Inner : ILabelable<int> { public int Id { get; set; } }
+                public class Lost : ILabelable<int> { public int Id { get; set; } }
+            }
+
+            public static class Setup
+            {
+                public static void Configure(LabelRegistry r) => r.Labelable<Note>().Labelable<Outer.Inner>();
+            }
+            """);
+
+        diags.Should().OnlyContain(d => d.Id == "CHSU001");
+        diags.Select(d => d.GetMessage(CultureInfo.InvariantCulture))
+            .Should().HaveCount(2)
+            .And.ContainSingle(m => m.StartsWith("Type 'Orphan' ", StringComparison.Ordinal))
+            .And.ContainSingle(m => m.StartsWith("Type 'Lost' ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task 在lambda裡註冊也算數()
+    {
+        var diags = await AnalyzeAsync("""
+            using System;
+            using Cornhsu.Labeling;
+            using Cornhsu.Labeling.EntityFrameworkCore;
+
+            public class Note : ILabelable<int> { public int Id { get; set; } }
+
+            public static class Setup
+            {
+                public static readonly Action<LabelRegistry> Configure = r => r.Labelable<Note>(n => n.Id.ToString());
+            }
+            """);
+
+        diags.Should().BeEmpty("AddLabeling(r => ...) 是最常見的寫法");
+    }
+
+    [Fact]
+    public async Task 已註冊基底類別的衍生類別本身沒註冊_照報()
+    {
+        // 執行期 Require 以精確型別比對:註冊了 Note 不代表 SpecialNote 可以貼標
+        var diags = await AnalyzeAsync("""
+            using Cornhsu.Labeling;
+            using Cornhsu.Labeling.EntityFrameworkCore;
+
+            public class Note : ILabelable<int> { public int Id { get; set; } }
+            public class SpecialNote : Note { }
+
+            public static class Setup
+            {
+                public static void Configure(LabelRegistry r) => r.Labelable<Note>();
+            }
+            """);
+
+        diags.Should().ContainSingle(d => d.Id == "CHSU001")
+            .Which.GetMessage(CultureInfo.InvariantCulture).Should().StartWith("Type 'SpecialNote' ");
+    }
+
+    [Fact]
+    public async Task 介面繼承ILabelable_不是類別_不報()
+    {
+        var diags = await AnalyzeAsync("""
+            using Cornhsu.Labeling;
+
+            public interface IHasLabels : ILabelable<int> { }
+            public interface IMarkerToo : ILabelable { }
+            """);
+
+        diags.Should().BeEmpty("只有具象類別才需要註冊");
+    }
+
+    [Fact]
+    public async Task 別的型別上同名的Labelable方法_不算註冊()
+    {
+        var diags = await AnalyzeAsync("""
+            using Cornhsu.Labeling;
+
+            public class Note : ILabelable<int> { public int Id { get; set; } }
+
+            public class OtherRegistry
+            {
+                public OtherRegistry Labelable<T>() => this;
+                public OtherRegistry Labelable() => this;
+            }
+
+            public static class Setup
+            {
+                public static void Configure(OtherRegistry r) => r.Labelable<Note>().Labelable();
+            }
+            """);
+
+        diags.Should().ContainSingle(d => d.Id == "CHSU001")
+            .Which.GetMessage(CultureInfo.InvariantCulture).Should().StartWith("Type 'Note' ");
     }
 }

@@ -157,6 +157,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             // (l.Parent = x、x.Children.Add(l))那時還沒寫回外鍵,還原碰不到,下一次存檔照樣落地。
             // 先把被改掉的主鍵放回去(否則偵測會因主鍵被改而拋),再盡力偵測一次,讓它們變成還原得掉的外鍵值
             snapshot.RestoreKeys();
+            CutConflictingInstances();
             DetectLabelChangesBestEffort();
             snapshot.Restore(detachUncapturedLabels: true);
             await ReloadConflictsAsync(ex, snapshot).ConfigureAwait(false);
@@ -370,6 +371,58 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         finally
         {
             tracker.AutoDetectChangesEnabled = autoDetect;
+        }
+    }
+
+    /// <summary>
+    /// 還原前的準備:lambda 可能把「另一個實例、主鍵卻跟追蹤中的標籤相同」的 Label 放進 Parent 或 Children。
+    /// 偵測變更碰到它會拋身分衝突,而 EF Core 10 衝突的那一筆還會以 Detached 留在追蹤器裡,之後每一次存檔都失敗
+    /// (純 EF 也一樣,沒有公開 API 清得掉)。偵測之前先沿著 Parent / Children 把這種實例的連結剪掉,讓衝突根本不發生。
+    /// 這種實例只可能是這次 lambda 放的:呼叫前那次偵測已經把消費端自己放進去的都追蹤起來了。
+    /// </summary>
+    private void CutConflictingInstances()
+    {
+        var tracked = TrackedLabelEntries().Where(e => e.State != EntityState.Detached).Select(e => e.Entity).ToList();
+        var trackedSet = new HashSet<Label>(tracked, ReferenceEqualityComparer.Instance);
+        var byId = new Dictionary<Guid, Label>();
+        foreach (var label in tracked)
+            byId[label.Id] = label;
+        bool Conflicts(Label candidate)
+            => !trackedSet.Contains(candidate) && byId.TryGetValue(candidate.Id, out var owner) && !ReferenceEquals(owner, candidate);
+
+        var visited = new HashSet<Label>(ReferenceEqualityComparer.Instance);
+        var queue = new Queue<Label>(tracked);
+        while (queue.Count > 0)
+        {
+            var label = queue.Dequeue();
+            if (!visited.Add(label)) continue;
+
+            if (label.Parent is { } parent)
+            {
+                if (Conflicts(parent))
+                    label.Parent = null;   // 外鍵等一下照記下的值還原,EF 會順著把 Parent 修正回來
+                else if (!trackedSet.Contains(parent))
+                    queue.Enqueue(parent);
+            }
+
+            if (label.Children is not { Count: > 0 } children) continue;
+            foreach (var child in children.ToList())
+            {
+                if (!Conflicts(child))
+                {
+                    if (!trackedSet.Contains(child))
+                        queue.Enqueue(child);
+                    continue;
+                }
+                try
+                {
+                    children.Remove(child);
+                }
+                catch (Exception)
+                {
+                    // 集合不准改:只能留著,偵測時那一筆會被 DetectLabelChangesBestEffort 吞掉
+                }
+            }
         }
     }
 

@@ -184,20 +184,39 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
     private IQueryable<TEntity> BuildEntityQuery(
         DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> groups, LabelMatch match)
     {
-        var links = db.Set<LabelLink<TEntity, TKey>>();
+        var lists = match == LabelMatch.Any || groups.Count == 1
+            ? new List<List<Guid>> { groups.SelectMany(g => g).Distinct().ToList() }
+            : groups.Select(g => g.ToList()).ToList();
 
-        if (match == LabelMatch.Any || groups.Count == 1)
+        if (EfParameter is null || lists.All(ids => ids.Count <= MaxIdsPerQuery))
+            return BuildEntityQuery(db, lists, asOneParameter: false);
+
+        // 大集合改用 EF.Parameter 以一個參數送出(見 LabelIdIn)。但那要資料庫能拆 JSON 陣列:
+        // SQL Server 的相容性層級低於 130 時沒有 OPENJSON,EF 會在翻譯時拋例外。先翻譯一次看看,
+        // 翻不出來就退回 EF 的預設做法(EF 9 在那裡是內嵌常數、EF 10 是一個值一個參數),跟 1.1.0 一樣
+        var query = BuildEntityQuery(db, lists, asOneParameter: true);
+        try
         {
-            return links
-                .Where(LabelIdIn(groups.SelectMany(g => g).Distinct().ToList()))
-                .Select(l => l.Entity)
-                .Distinct();
+            query.ToQueryString();
+            return query;
         }
-
-        var q = links.Where(LabelIdIn(groups[0].ToList()));
-        for (var i = 1; i < groups.Count; i++)
+        catch (InvalidOperationException)
         {
-            var sub = links.Where(LabelIdIn(groups[i].ToList())).Select(l2 => l2.EntityId);
+            return BuildEntityQuery(db, lists, asOneParameter: false);
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="lists"/> 只有一份時是 Any(或單一群組):所有 Id 合併成一個 IN。
+    /// 多份時是 All:第一份為基底,其餘各以 IN 子查詢做交集。
+    /// </summary>
+    private static IQueryable<TEntity> BuildEntityQuery(DbContext db, List<List<Guid>> lists, bool asOneParameter)
+    {
+        var links = db.Set<LabelLink<TEntity, TKey>>();
+        var q = links.Where(LabelIdIn(lists[0], asOneParameter));
+        for (var i = 1; i < lists.Count; i++)
+        {
+            var sub = links.Where(LabelIdIn(lists[i], asOneParameter)).Select(l2 => l2.EntityId);
             q = q.Where(l => sub.Contains(l.EntityId));
         }
         return q.Select(l => l.Entity).Distinct();
@@ -214,15 +233,16 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
     /// 而 EF Core 10 預設把 Contains 展開成一個值一個參數,超過資料庫的參數上限就拋例外。
     /// 這裡回傳的是要讓呼叫端接著組合的 IQueryable(QueryByLabelsAsync),只能是一條 SQL,不能像批次 API 那樣分批往返;
     /// 所以超過 <see cref="MaxIdsPerQuery"/> 時改用 <c>EF.Parameter(ids)</c>,讓整個集合以一個參數送出
-    /// (EF Core 10 文件寫明的逐查詢覆寫,也就是 EF Core 8/9 的預設做法:SQLite 的 json_each、SQL Server 的 OPENJSON)。
-    /// EF Core 8 沒有 EF.Parameter,但它的預設本來就是一個參數。數量少時維持 EF 的預設(EF 10 的多參數對查詢計畫較好)。
+    /// (EF Core 10 文件寫明的逐查詢覆寫:SQLite 的 json_each、SQL Server 的 OPENJSON、PostgreSQL 的陣列參數)。
+    /// EF Core 8 沒有 EF.Parameter,也不需要:它的預設本來就是一個參數(SQL Server 相容性層級低於 130 時是內嵌常數)。
+    /// 數量少時維持 EF 的預設(EF 10 的多參數對查詢計畫較好)。<paramref name="asOneParameter"/> 由呼叫端確認翻譯得出來才給 true。
     /// </summary>
-    private static Expression<Func<LabelLink<TEntity, TKey>, bool>> LabelIdIn(List<Guid> ids)
+    private static Expression<Func<LabelLink<TEntity, TKey>, bool>> LabelIdIn(List<Guid> ids, bool asOneParameter)
     {
         var link = Expression.Parameter(typeof(LabelLink<TEntity, TKey>), "l");
         Expression values = Expression.Field(
             Expression.Constant(new StrongBox<List<Guid>>(ids)), nameof(StrongBox<List<Guid>>.Value));
-        if (ids.Count > MaxIdsPerQuery && EfParameter is not null)
+        if (asOneParameter && ids.Count > MaxIdsPerQuery && EfParameter is not null)
             values = Expression.Call(EfParameter, values);
         var body = Expression.Call(
             typeof(Enumerable), nameof(Enumerable.Contains), new[] { typeof(Guid) },

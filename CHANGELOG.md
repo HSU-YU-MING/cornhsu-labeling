@@ -136,8 +136,11 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
 - **以名稱查詢時,子樹裡有幾萬個標籤也照常完成**。`FindByLabel(s)Async`／`QueryByLabel(s)Async` 把名稱連同子孫
   展開成標籤 Id 集合再查連結,EF Core 10 上同樣一個 Id 一個參數:單一子樹超過約 32,000 個標籤(SQLite)或 2,100 個(SQL Server)
   就拋例外。`QueryByLabelsAsync` 回傳的是讓你接著組合的 `IQueryable`,只能是一條 SQL、不能分批往返,
-  所以 Id 超過 1,000 個時改用 `EF.Parameter`(EF Core 9 起才有)把整個集合當成一個參數送出——這正是 EF Core 8/9 的預設做法;
-  EF Core 8 本來就是一個參數,不受影響。數量少時照舊用 EF 的預設。這也是 1.1.0 + EF 10 就有的問題。
+  所以 Id 超過 1,000 個時改用 `EF.Parameter`(EF Core 9 起才有)把整個集合當成一個參數送出(SQLite 的 `json_each`、
+  SQL Server 的 `OPENJSON`)。SQL Server 的相容性層級低於 130(`UseCompatibilityLevel(120)` 等)時沒有 `OPENJSON`,
+  EF 翻譯不出來;store 會先翻譯一次確認,翻不出來就退回 EF 的預設做法(EF 9 內嵌常數、EF 10 一個值一個參數),
+  結果跟 1.1.0 相同。EF Core 8 沒有 `EF.Parameter`,一律照它自己的預設。數量少時照舊用 EF 的預設。
+  這也是 1.1.0 + EF 10 就有的問題。
 - **`GetLabelsOfManyAsync` 的排序改在資料庫做,與 `GetLabelsOfAsync`／`GetAllAsync` 一致**。
   以前名稱在記憶體用 Ordinal 排,不分大小寫的 collation 上 `SortOrder` 相同的標籤,同一個實體用兩種讀法
   會排得不一樣(`B-upper, a-lower` 對 `a-lower, B-upper`)。現在批次讀的順序一律跟資料庫的 collation 走:

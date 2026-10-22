@@ -245,21 +245,21 @@ public class UpdateFailureTests
         await db.Store.CreateAsync("x");
     }
 
-    /// <summary>不在模型裡的 Label 子類別:EF 偵測到它會拋「找不到實體型別」。</summary>
-    private sealed class UnmappedLabel : Label
-    {
-    }
-
     [Fact]
-    public async Task lambda把模型外的型別放進Children又自己拋例外_還原前的偵測失敗_原例外照拋()
+    public async Task 同Id的另一個實例剪不掉時_還原前的偵測撞身分衝突_原例外照拋_其他修改照常還原()
     {
+        // 集合拒絕 Remove,剪不掉那個實例:還原前的偵測一定會撞身分衝突,那個失敗只能吞掉,不能蓋掉原本的例外
         using var db = new TestDb();
         var parent = await db.Store.CreateAsync("p");
-        var rogue = new UnmappedLabel { Id = Guid.NewGuid(), Name = "rogue" };
+        var other = await db.Store.CreateAsync("o");
+        var children = new RefusingCollection();
+        parent.Children = children;
+        var clone = new Label { Id = other.Id, Name = "o", CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
 
         var act = () => db.Store.UpdateAsync(parent.Id, l =>
         {
-            l.Children.Add(rogue);   // 還原前偵測變更時 EF 會拋「找不到實體型別」
+            l.Children.Add(clone);
+            children.Armed = true;
             l.Color = "#000000";
             throw new FormatException("消費端自己的錯");
         });

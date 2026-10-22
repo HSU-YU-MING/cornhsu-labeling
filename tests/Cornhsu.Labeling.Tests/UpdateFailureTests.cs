@@ -190,6 +190,40 @@ public class UpdateFailureTests
         (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
     }
 
+    [Fact]
+    public async Task 呼叫前就在追蹤器裡的標籤_lambda沒改它的名稱_舊資料不驗也不改寫()
+    {
+        using var db = new TestDb();
+        var legacy = await db.Store.CreateAsync("舊");
+        var target = await db.Store.CreateAsync("目標");
+        await WriteLegacyNameAsync(db, legacy.Id, "legacy ");
+        await db.Context.Set<Label>().SingleAsync(l => l.Id == legacy.Id);   // 呼叫前就載進追蹤器(例如清單畫面)
+
+        await db.Store.UpdateAsync(target.Id, l => l.Color = "#111111");
+
+        (await StoredAsync(db, legacy.Id)).Name.Should().Be("legacy ", "只驗 lambda 改了名稱的標籤");
+    }
+
+    // ---- 還原前的偵測遇到身分衝突、自動建立標籤提交後才拋例外 ----
+
+    [Fact]
+    public async Task lambda經Children放進同Id的另一個實例又自己拋例外_原例外照拋_context仍可用()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var other = await db.Store.CreateAsync("o");
+        var clone = new Label { Id = other.Id, Name = "o", CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
+
+        var act = () => db.Store.UpdateAsync(parent.Id, l =>
+        {
+            l.Children.Add(clone);   // 偵測變更時會撞身分衝突(同 Id 已追蹤另一個實例)
+            throw new FormatException("消費端自己的錯");
+        });
+
+        await act.Should().ThrowAsync<FormatException>("還原前的偵測失敗不能蓋掉原本的例外");
+        await db.Store.CreateAsync("x");
+    }
+
     // ---- 同一次存檔裡讓出、接手名稱:占用檢查要看得到,v1.1.0 能成功的寫法不能開始拋例外 ----
 
     [Fact]

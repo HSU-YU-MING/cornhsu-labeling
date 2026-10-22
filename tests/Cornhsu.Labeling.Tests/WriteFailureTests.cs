@@ -510,6 +510,22 @@ public class WriteFailureTests
     }
 
     [Fact]
+    public async Task AttachAsync自動建立標籤那次存檔提交後才拋例外_標籤留在追蹤器()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var note = await db.AddNoteAsync();
+
+        after.Armed = true;
+        var act = () => db.Store.AttachAsync(note, "新標籤");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        db.Context.ChangeTracker.Entries<Label>().Should().ContainSingle()
+            .Which.State.Should().Be(EntityState.Unchanged, "標籤已經建立並提交,不能 detach 掉");
+        (await StoredLabelsAsync(db)).Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task AttachAsync提交後才拋例外_已寫入的連結留在追蹤器_再貼一次照常()
     {
         var after = new ThrowAfterSave();

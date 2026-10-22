@@ -197,6 +197,12 @@ static async Task WithoutDiContainer()
     await db.SaveChangesAsync();
     await store.AttachAsync(note, "paper");
     Check((await store.FindByLabelAsync("paper")).Count == 1, "LabelStoreFactory.Create:不經 DI 容器也能用");
+
+    // README:Create 會像 AddLabeling 一樣封存 registry
+    var sealedAfterCreate = false;
+    try { registry.Labelable<Note>(); }
+    catch (InvalidOperationException ex) when (ex.Message.Contains("sealed")) { sealedAfterCreate = true; }
+    Check(sealedAfterCreate, "LabelStoreFactory.Create:建完 store 之後 registry 已封存");
 }
 
 static void Render(Note note, IReadOnlyList<Label> labels)

@@ -5,7 +5,8 @@
 **行為的 major,不是 API 的 major。** 公開型別與成員、資料庫 schema、相依樓地板(EF Core 8.0.11、
 Roslyn 4.8)都沒有變:以反射比對 v1.1.0 的 net8.0 與 netstandard2.0 組件,公開表面逐行相同,升級不必改任何簽章,
 也不需要 migration。升 major 是因為兩項語意改動會讓 1.x 的部分呼叫改變結果——以名稱查詢的四支 API 改依資料庫
-collation 比對名稱、`UpdateAsync` 的 lambda 只能改目標標籤本身——外加幾項對外可見的例外型別與訊息改變。
+collation 比對名稱、`UpdateAsync` 的 lambda 只能改目標標籤本身——加上 `LabelStoreFactory.Create` 改成跟 `AddLabeling`
+一樣封存 registry,以及幾項對外可見的例外型別與訊息改變。
 其餘是 bug 修正:寫入失敗時把自己動過的追蹤器還原、`UpdateAsync` 的循環檢查看得到導覽屬性、
 EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
 
@@ -44,6 +45,13 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
 4. **`GetLabelsOfManyAsync` 的排序改跟資料庫 collation 走**(與 `GetLabelsOfAsync`／`GetAllAsync` 一致)。
    SQL Server 預設、PostgreSQL 語言學 collation 上,`SortOrder` 相同、大小寫混雜的名稱順序會改變。
    要 1.x 的順序:`labels.OrderBy(l => l.SortOrder).ThenBy(l => l.Name, StringComparer.Ordinal)`。
+5. **`LabelStoreFactory.Create` 會封存 registry**(跟 `AddLabeling` 一樣)。之後再呼叫 `registry.Labelable<T>()`
+   拋 `InvalidOperationException`(`LabelRegistry is sealed; no further types can be registered.`)。
+   - 舊:`var store = LabelStoreFactory.Create(db, registry); registry.Labelable<Extra>();`
+     新:先把所有型別註冊完再建 store——`registry.Labelable<Extra>(); var store = LabelStoreFactory.Create(db, registry);`
+   - 型別分散在各模組註冊的話,在第一次 `Create`(也是第一個 DbContext 建 model)之前全部收齊;
+     registry 照舊是全 App 一份,之後每個 DbContext 各自 `Create` 不受影響。
+   - `LabelTableName`、`LinkTablePrefix`、`AutoCreateLabels` 這三個屬性不受封存影響(`AddLabeling` 路徑也一樣)。
 
 ### 公開 API 與相依
 
@@ -161,6 +169,10 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   訊息與改目標 `Id` 相同。你在呼叫前自己做、還沒存的修改不受限制,照舊隨這次存檔送出;
   lambda 只是載入進來讀的標籤也不算修改。1.x 為了讓「目標讓出名字、別的標籤接手」這類寫法繼續成功而加的
   其他標籤名稱驗證與讓出判斷,隨之整段拿掉。
+- **`LabelStoreFactory.Create` 建完 store 之後封存 registry**(破壞性,遷移見上方 5)。以前只有 `AddLabeling` 封存,
+  不經 DI 的路徑在 `Create` 之後還能註冊型別,不會報錯;但 EF Core 的 model 以 DbContext 型別快取,
+  model 建好之後才註冊的型別不在 model 裡,要到貼標或查詢時才以缺表之類的資料庫錯誤冒出來。
+  現在兩條路徑一致,錯誤出現在寫錯的那一行。參數檢查失敗(`context` 或 `registry` 為 null)時不封存。
 - **`UpdateAsync` 每次呼叫多了掃過追蹤中標籤的成本**(行為不變)。還原與循環檢查要求在 lambda 前後各看一遍
   追蹤中的標籤;追蹤 1,000 個標籤、另加 10,000 個其他實體時,每次呼叫約 4–6 ms(1.1.0 約 2.5 ms)。
   內部列舉時暫時關掉自動偵測、只偵測標籤,不再每次都掃整個 context(修正前同樣的量測是 17–20 ms);

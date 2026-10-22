@@ -205,10 +205,11 @@ public class RegistrationTests
     }
 
     [Fact]
-    public void Factory不封存registry_Create之後仍可註冊()
+    public void Factory建立store之後封存registry_再註冊拋例外()
     {
-        // 1.x 的現行契約:只有 AddLabeling 會封存。改成在 Create 裡封存,
-        // 會讓「先 Create 再註冊」的既有寫法開始拋例外,屬破壞性變更。
+        // 2.0 起跟 AddLabeling 一樣:store 建好之後 registry 就不能再加型別。
+        // 1.x 不封存,「先 Create 再註冊」不會報錯,但 model 若已經建好,後註冊的型別不在 model 裡,
+        // 要到貼標或查詢時才以缺表之類的資料庫錯誤冒出來
         var registry = new LabelRegistry();
         registry.Labelable<TestNote>();
         using var conn = new SqliteConnection("DataSource=:memory:");
@@ -220,6 +221,43 @@ public class RegistrationTests
         LabelStoreFactory.Create(context, registry);
         var act = () => registry.Labelable<TestTodo>();
 
-        act.Should().NotThrow();
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("LabelRegistry is sealed; no further types can be registered.");
+        registry.Descriptors.Select(d => d.ClrType).Should().Equal(typeof(TestNote));
+    }
+
+    [Fact]
+    public async Task 同一個registry可以建立多個store_封存不影響後來的Create()
+    {
+        // 無 DI 的 App 常是每個 DbContext 各建一個 store,共用全域的 registry
+        var registry = new LabelRegistry();
+        registry.Labelable<TestNote>(n => n.Title);
+        using var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var options = new DbContextOptionsBuilder<TestDbContext>()
+            .UseSqlite(conn).EnableServiceProviderCaching(false).Options;
+        using var first = new TestDbContext(options, registry);
+        first.Database.EnsureCreated();
+        LabelStoreFactory.Create(first, registry);
+
+        using var second = new TestDbContext(options, registry);
+        var store = LabelStoreFactory.Create(second, registry);
+        var note = new TestNote { Id = Guid.NewGuid(), Title = "n" };
+        second.Notes.Add(note);
+        await second.SaveChangesAsync();
+        await store.AttachAsync(note, "論文");
+
+        (await store.FindByLabelAsync("論文")).Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Factory的參數檢查失敗時_不封存registry()
+    {
+        var registry = new LabelRegistry();
+
+        var act = () => LabelStoreFactory.Create<TestDbContext>(null!, registry);
+
+        act.Should().Throw<ArgumentNullException>();
+        registry.Invoking(r => r.Labelable<TestNote>()).Should().NotThrow();
     }
 }

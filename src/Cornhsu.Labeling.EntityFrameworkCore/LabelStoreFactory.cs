@@ -13,6 +13,9 @@ public static class LabelStoreFactory
     /// <summary>
     /// Creates an <see cref="ILabelStore"/> over the given DbContext and registry.
     /// The returned store does not own the context — its lifetime and disposal stay with the caller.
+    /// Like <see cref="ServiceCollectionExtensions.AddLabeling{TContext}"/>, this seals the registry:
+    /// register every labelable type before the first call, because <see cref="LabelRegistry.Labelable{TEntity}"/>
+    /// throws <see cref="InvalidOperationException"/> afterwards. Creating more stores over the same registry is fine.
     /// </summary>
     /// <typeparam name="TContext">Your application's DbContext type.</typeparam>
     /// <param name="context">
@@ -30,6 +33,10 @@ public static class LabelStoreFactory
     {
         if (context is null) throw new ArgumentNullException(nameof(context));
         if (registry is null) throw new ArgumentNullException(nameof(registry));
+
+        // 跟 AddLabeling 一樣封存:store 建好之後再註冊的型別,EF 已經建好(或之後會沿用快取)的 model 裡不會有,
+        // 要到貼標或查詢時才以缺表之類的資料庫錯誤冒出來。在這裡擋下,錯誤出現在寫錯的那一行
+        registry.Seal();
         return new EfLabelStore<TContext>(context, registry, logger is null ? null : new LoggerAdapter<TContext>(logger));
     }
 

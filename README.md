@@ -216,7 +216,9 @@ using var db = new AppDbContext(options, registry);
 var store = LabelStoreFactory.Create(db, registry);   // optional third argument: ILogger<ILabelStore>
 ```
 
-The store does not own the DbContext; disposing it stays with you.
+The store does not own the DbContext; disposing it stays with you. `Create` seals the registry, as
+`AddLabeling` does: register every type before the first call, because `Labelable` throws afterwards.
+Creating more stores over the same registry (one per DbContext, say) is fine.
 
 ## Using EF Core migrations
 

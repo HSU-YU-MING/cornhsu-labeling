@@ -205,7 +205,9 @@ using var db = new AppDbContext(options, registry);
 var store = LabelStoreFactory.Create(db, registry);   // 第三個參數可選:ILogger<ILabelStore>
 ```
 
-store 不擁有 DbContext,釋放它仍是你的責任。
+store 不擁有 DbContext,釋放它仍是你的責任。`Create` 會像 `AddLabeling` 一樣封存 registry:
+所有型別都要在第一次呼叫之前註冊完,之後再呼叫 `Labelable` 會拋例外。同一個 registry 建立更多 store
+(例如每個 DbContext 一個)沒有問題。
 
 ## 使用 EF Core Migrations
 

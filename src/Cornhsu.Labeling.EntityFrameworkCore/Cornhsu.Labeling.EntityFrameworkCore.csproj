@@ -12,4 +12,10 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.11" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
   </ItemGroup>
+
+  <!-- 只為了測試:TrackerSnapshot 的效能防線要直接量 ArmForSave(見 tests 的 PerformanceGuardTests)。
+       這不屬於公開 API,也不是安全邊界(組件沒有強式名稱);消費端不該依賴 internal 成員。 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Cornhsu.Labeling.Tests" />
+  </ItemGroup>
 </Project>

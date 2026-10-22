@@ -3,65 +3,97 @@ using Cornhsu.Labeling.EntityFrameworkCore;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Cornhsu.Labeling.Tests;
 
+/// <summary>效能防線不跟其他測試平行跑:平行時的 CPU 競爭會讓計時失真(release.yml 也跑這些測試,假紅會擋發佈)。</summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class PerformanceGuardCollection
+{
+    public const string Name = "效能防線";
+}
+
 /// <summary>
-/// 效能的退化防線。不設絕對時間(CI 機器快慢不一),而是跟「同一個程序裡、同樣筆數的純 EF 寫入」比倍數:
-/// 實測(30,000 條連結):線性的實作約 1 倍,寫壞成 O(n²)(第二輪審查抓到的 ArmForSave 去重)約 4 倍,
-/// 門檻 2.5 倍兩邊都有餘裕。
-/// 只在 SQLite 上跑:伺服器型 provider 的往返時間會蓋掉要量的東西,而且慢。
+/// 效能的退化防線。
+/// <list type="bullet">
+/// <item>主防線直接量 <c>TrackerSnapshot.ArmForSave</c>(經 InternalsVisibleTo):每次成功的寫入都會走它,
+/// 第二輪審查抓到它的去重寫成了 O(n²)。6 萬個待存項目,線性約百毫秒,O(n²) 要十幾秒,門檻 3 秒兩邊餘裕都很大,
+/// 也不受 provider 與機器快慢影響。</item>
+/// <item>端到端那條量 AttachManyAsync 的「筆數加倍、時間變幾倍」:線性約 2 倍,平方約 4 倍。
+/// 只當粗略的防線(門檻 3 倍),抓的是整條路徑上任何地方退化成平方;取三次交錯量測的中位數。
+/// 只在 SQLite 上跑:伺服器型 provider 的往返時間會蓋掉要量的東西,而且慢。</item>
+/// </list>
 /// </summary>
+[Collection(PerformanceGuardCollection.Name)]
 public class PerformanceGuardTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public PerformanceGuardTests(ITestOutputHelper output) => _output = output;
+
     private static bool OnSqlite
         => (Environment.GetEnvironmentVariable("CORNHSU_TEST_PROVIDER")?.ToLowerInvariant() ?? "sqlite") == "sqlite";
 
-    private static async Task<List<TestNote>> AddNotesAsync(TestDb db, int count)
+    [Fact]
+    public void ArmForSave_幾萬個待存項目_去重是線性的()
     {
-        var notes = Enumerable.Range(0, count).Select(i => new TestNote { Id = Guid.NewGuid(), Title = $"n{i}" }).ToList();
-        db.Context.AddRange(notes);
+        using var db = new TestDb();
+        var snapshot = new TrackerSnapshot(db.Context);
+        const int count = 60_000;
+        for (var i = 0; i < count; i++)
+        {
+            var note = new TestNote { Id = Guid.NewGuid(), Title = "" };
+            db.Context.Notes.Add(note);
+            snapshot.Added(note);
+        }
+        snapshot.ArmForSave();   // 暖機:JIT 掉第一次的成本(結果會被下一次覆蓋)
+
+        var watch = Stopwatch.StartNew();
+        snapshot.ArmForSave();
+        watch.Stop();
+
+        _output.WriteLine($"PERFGUARD ArmForSave {count} items: {watch.Elapsed.TotalMilliseconds:F1} ms");
+        watch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(3),
+            $"ArmForSave 處理 {count:N0} 個待存項目花了 {watch.Elapsed.TotalMilliseconds:F0} ms;線性的去重約百毫秒,O(n²) 要十幾秒");
+    }
+
+    private static async Task<TimeSpan> TimeAttachManyAsync(int notes)
+    {
+        using var db = new TestDb();
+        var list = Enumerable.Range(0, notes).Select(i => new TestNote { Id = Guid.NewGuid(), Title = $"n{i}" }).ToList();
+        db.Context.AddRange(list);
         await db.Context.SaveChangesAsync();
-        return notes;
+        await db.Store.CreateAsync("a");
+        await db.Store.CreateAsync("b");
+        await db.Store.AttachManyAsync(list.Take(10), new[] { "a" });   // 暖機
+
+        var watch = Stopwatch.StartNew();
+        await db.Store.AttachManyAsync(list, new[] { "a", "b" });
+        watch.Stop();
+        return watch.Elapsed;
     }
 
     [Fact]
-    public async Task AttachManyAsync大批連結_成本與同樣筆數的純EF寫入同一個量級()
+    public async Task AttachManyAsync連結數加倍_時間大致也只加倍()
     {
         if (!OnSqlite) return;
-        const int notesPerBatch = 15_000;   // × 2 個標籤 = 30,000 條連結
+        const int small = 5_000;   // × 2 個標籤 = 10,000 條連結;加倍後 20,000 條
 
-        // 純 EF 寫入同樣筆數的連結:基準
-        using var baselineDb = new TestDb();
-        var baselineNotes = await AddNotesAsync(baselineDb, notesPerBatch);
-        var x = await baselineDb.Store.CreateAsync("x");
-        var y = await baselineDb.Store.CreateAsync("y");
-        var links = baselineNotes.SelectMany(n => new[]
+        var smallRuns = new List<double>();
+        var largeRuns = new List<double>();
+        for (var round = 0; round < 3; round++)   // 交錯量:兩種大小輪流,機器忽快忽慢時兩邊一起受影響
         {
-            new LabelLink<TestNote, Guid> { LabelId = x.Id, EntityId = n.Id, AttachedAt = DateTimeOffset.UtcNow },
-            new LabelLink<TestNote, Guid> { LabelId = y.Id, EntityId = n.Id, AttachedAt = DateTimeOffset.UtcNow },
-        }).ToList();
-        baselineDb.Context.AddRange(links.Take(10));   // 暖機:兩邊都先 JIT 掉第一次寫入的成本
-        await baselineDb.Context.SaveChangesAsync();
-        var baseline = Stopwatch.StartNew();
-        baselineDb.Context.AddRange(links.Skip(10));
-        await baselineDb.Context.SaveChangesAsync();
-        baseline.Stop();
+            smallRuns.Add((await TimeAttachManyAsync(small)).TotalMilliseconds);
+            largeRuns.Add((await TimeAttachManyAsync(small * 2)).TotalMilliseconds);
+        }
 
-        // 同樣筆數走 AttachManyAsync
-        using var db = new TestDb();
-        var notes = await AddNotesAsync(db, notesPerBatch);
-        await db.Store.CreateAsync("a");
-        await db.Store.CreateAsync("b");
-        await db.Store.AttachManyAsync(notes.Take(10), new[] { "a" });   // 暖機:JIT 掉第一次呼叫的成本
-        var attach = Stopwatch.StartNew();
-        await db.Store.AttachManyAsync(notes, new[] { "a", "b" });
-        attach.Stop();
+        static double Median(List<double> values) => values.OrderBy(v => v).ElementAt(values.Count / 2);
+        var growth = Median(largeRuns) / Math.Max(Median(smallRuns), 1);
+        _output.WriteLine($"PERFGUARD AttachMany growth: {growth:F2} (small {string.Join("/", smallRuns.Select(v => v.ToString("F0")))} ms, large {string.Join("/", largeRuns.Select(v => v.ToString("F0")))} ms)");
 
-        (await db.Context.Set<LabelLink<TestNote, Guid>>().CountAsync()).Should().Be(notesPerBatch * 2);
-        attach.Elapsed.TotalMilliseconds.Should().BeLessThan(
-            Math.Max(baseline.Elapsed.TotalMilliseconds, 200) * 2.5,
-            $"AttachManyAsync 花了 {attach.Elapsed.TotalMilliseconds:F0} ms,同樣筆數的純 EF 寫入花了 {baseline.Elapsed.TotalMilliseconds:F0} ms;"
-            + "倍數拉開通常是存檔前後的記帳(TrackerSnapshot)寫成了 O(n²)");
+        growth.Should().BeLessThan(3.0,
+            $"連結數加倍,AttachManyAsync 從 {Median(smallRuns):F0} ms 變成 {Median(largeRuns):F0} ms({growth:F2} 倍);"
+            + "線性約 2 倍,平方約 4 倍");
     }
 }

@@ -14,7 +14,9 @@ internal sealed class TrackerSnapshot
     private readonly DbContext _db;
     private readonly List<Item> _items = new();
     private readonly HashSet<object> _captured = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<object> _capturedUnchanged = new(ReferenceEqualityComparer.Instance);
     private readonly List<object> _added = new();
+    private readonly HashSet<object> _addedSet = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<object> _owned = new(ReferenceEqualityComparer.Instance);
     private List<(EntityEntry Entry, EntityState State)>? _pending;
 
@@ -26,6 +28,8 @@ internal sealed class TrackerSnapshot
     public void Capture(EntityEntry entry, bool withValues = true)
     {
         if (!_captured.Add(entry.Entity)) return;
+        if (entry.State == EntityState.Unchanged)
+            _capturedUnchanged.Add(entry.Entity);
         _items.Add(new Item(
             entry,
             entry.State,
@@ -34,7 +38,11 @@ internal sealed class TrackerSnapshot
     }
 
     /// <summary>記下 store 自己新加進追蹤器的實體;還原時 detach。</summary>
-    public void Added(object entity) => _added.Add(entity);
+    public void Added(object entity)
+    {
+        if (_addedSet.Add(entity))
+            _added.Add(entity);
+    }
 
     /// <summary>標明這個實體是這次呼叫要寫的對象(例如 UpdateAsync 的那個標籤);並發衝突時一律重讀。</summary>
     public void Own(object entity) => _owned.Add(entity);
@@ -44,9 +52,7 @@ internal sealed class TrackerSnapshot
     /// 或記下時沒有未存變更(Unchanged)的才行。消費端自己改過、還沒存的項目不重讀,免得替他丟掉修改。
     /// </summary>
     public bool MayReload(object entity)
-        => _owned.Contains(entity)
-           || _added.Any(a => ReferenceEquals(a, entity))
-           || _items.Any(i => ReferenceEquals(i.Entry.Entity, entity) && i.State == EntityState.Unchanged);
+        => _owned.Contains(entity) || _addedSet.Contains(entity) || _capturedUnchanged.Contains(entity);
 
     /// <summary>
     /// 存檔前呼叫:記下 store 這次要寫出去的項目(新加的、這次呼叫的對象、狀態被這次呼叫改掉的)目前的待存狀態。
@@ -54,10 +60,11 @@ internal sealed class TrackerSnapshot
     public void ArmForSave()
     {
         var pending = new List<(EntityEntry Entry, EntityState State)>();
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);   // 去重要 O(1):批次貼標一次就是幾萬條連結
         void Add(EntityEntry entry)
         {
             if ((entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
-                && !pending.Any(p => ReferenceEquals(p.Entry.Entity, entry.Entity)))
+                && seen.Add(entry.Entity))
                 pending.Add((entry, entry.State));
         }
 

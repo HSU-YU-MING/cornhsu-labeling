@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 
@@ -187,22 +188,46 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
 
         if (match == LabelMatch.Any || groups.Count == 1)
         {
-            var ids = groups.SelectMany(g => g).Distinct().ToList();
             return links
-                .Where(l => ids.Contains(l.LabelId))
+                .Where(LabelIdIn(groups.SelectMany(g => g).Distinct().ToList()))
                 .Select(l => l.Entity)
                 .Distinct();
         }
 
-        var first = groups[0].ToList();
-        var q = links.Where(l => first.Contains(l.LabelId));
+        var q = links.Where(LabelIdIn(groups[0].ToList()));
         for (var i = 1; i < groups.Count; i++)
         {
-            var ids = groups[i].ToList();
-            var sub = links.Where(l2 => ids.Contains(l2.LabelId)).Select(l2 => l2.EntityId);
+            var sub = links.Where(LabelIdIn(groups[i].ToList())).Select(l2 => l2.EntityId);
             q = q.Where(l => sub.Contains(l.EntityId));
         }
         return q.Select(l => l.Entity).Distinct();
+    }
+
+    /// <summary>EF Core 9 起才有的 <c>EF.Parameter</c>;樓地板是 EF Core 8,只能在執行期找。EF Core 8 上是 null。</summary>
+    private static readonly MethodInfo? EfParameter =
+        typeof(EF).GetMethod("Parameter", BindingFlags.Public | BindingFlags.Static) is { IsGenericMethodDefinition: true } m
+            ? m.MakeGenericMethod(typeof(List<Guid>))
+            : null;
+
+    /// <summary>
+    /// 組 <c>l =&gt; ids.Contains(l.LabelId)</c>。標籤 Id 集合(含子孫的一整棵子樹)可能有幾萬個,
+    /// 而 EF Core 10 預設把 Contains 展開成一個值一個參數,超過資料庫的參數上限就拋例外。
+    /// 這裡回傳的是要讓呼叫端接著組合的 IQueryable(QueryByLabelsAsync),只能是一條 SQL,不能像批次 API 那樣分批往返;
+    /// 所以超過 <see cref="MaxIdsPerQuery"/> 時改用 <c>EF.Parameter(ids)</c>,讓整個集合以一個參數送出
+    /// (EF Core 10 文件寫明的逐查詢覆寫,也就是 EF Core 8/9 的預設做法:SQLite 的 json_each、SQL Server 的 OPENJSON)。
+    /// EF Core 8 沒有 EF.Parameter,但它的預設本來就是一個參數。數量少時維持 EF 的預設(EF 10 的多參數對查詢計畫較好)。
+    /// </summary>
+    private static Expression<Func<LabelLink<TEntity, TKey>, bool>> LabelIdIn(List<Guid> ids)
+    {
+        var link = Expression.Parameter(typeof(LabelLink<TEntity, TKey>), "l");
+        Expression values = Expression.Field(
+            Expression.Constant(new StrongBox<List<Guid>>(ids)), nameof(StrongBox<List<Guid>>.Value));
+        if (ids.Count > MaxIdsPerQuery && EfParameter is not null)
+            values = Expression.Call(EfParameter, values);
+        var body = Expression.Call(
+            typeof(Enumerable), nameof(Enumerable.Contains), new[] { typeof(Guid) },
+            values, Expression.Property(link, nameof(LabelLink<TEntity, TKey>.LabelId)));
+        return Expression.Lambda<Func<LabelLink<TEntity, TKey>, bool>>(body, link);
     }
 
     /// <summary>

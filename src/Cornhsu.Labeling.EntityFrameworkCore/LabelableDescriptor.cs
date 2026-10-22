@@ -1,5 +1,4 @@
 using System.Linq.Expressions;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 
@@ -188,7 +187,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
             ? new List<List<Guid>> { groups.SelectMany(g => g).Distinct().ToList() }
             : groups.Select(g => g.ToList()).ToList();
 
-        if (EfParameter is null || lists.All(ids => ids.Count <= MaxIdsPerQuery))
+        if (EfParameterLookup.ForGuidList is null || lists.All(ids => ids.Count <= MaxIdsPerQuery))
             return BuildEntityQuery(db, lists, asOneParameter: false);
 
         // 大集合改用 EF.Parameter 以一個參數送出(見 LabelIdIn)。但那要資料庫能拆 JSON 陣列:
@@ -222,12 +221,6 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         return q.Select(l => l.Entity).Distinct();
     }
 
-    /// <summary>EF Core 9 起才有的 <c>EF.Parameter</c>;樓地板是 EF Core 8,只能在執行期找。EF Core 8 上是 null。</summary>
-    private static readonly MethodInfo? EfParameter =
-        typeof(EF).GetMethod("Parameter", BindingFlags.Public | BindingFlags.Static) is { IsGenericMethodDefinition: true } m
-            ? m.MakeGenericMethod(typeof(List<Guid>))
-            : null;
-
     /// <summary>
     /// 組 <c>l =&gt; ids.Contains(l.LabelId)</c>。標籤 Id 集合(含子孫的一整棵子樹)可能有幾萬個,
     /// 而 EF Core 10 預設把 Contains 展開成一個值一個參數,超過資料庫的參數上限就拋例外。
@@ -242,8 +235,8 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         var link = Expression.Parameter(typeof(LabelLink<TEntity, TKey>), "l");
         Expression values = Expression.Field(
             Expression.Constant(new StrongBox<List<Guid>>(ids)), nameof(StrongBox<List<Guid>>.Value));
-        if (asOneParameter && ids.Count > MaxIdsPerQuery && EfParameter is not null)
-            values = Expression.Call(EfParameter, values);
+        if (asOneParameter && ids.Count > MaxIdsPerQuery && EfParameterLookup.ForGuidList is { } efParameter)
+            values = Expression.Call(efParameter, values);
         var body = Expression.Call(
             typeof(Enumerable), nameof(Enumerable.Contains), new[] { typeof(Guid) },
             values, Expression.Property(link, nameof(LabelLink<TEntity, TKey>.LabelId)));

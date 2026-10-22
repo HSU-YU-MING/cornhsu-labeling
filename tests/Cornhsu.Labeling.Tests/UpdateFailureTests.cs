@@ -273,6 +273,49 @@ public class UpdateFailureTests
     }
 
     [Fact]
+    public async Task lambda刪掉有連結的別的標籤被拒絕後_EF串聯刪掉的連結也不會在下一次存檔刪除()
+    {
+        // EF 預設在 Remove 的當下就把追蹤中的連結串聯標成刪除;只還原標籤的話,連結會在下一次存檔被刪掉
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        var other = await db.Store.CreateAsync("o");
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "o");   // 連結在追蹤器裡
+
+        var act = () => db.Store.UpdateAsync(target.Id, l => db.Context.Remove(other));
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*but it deleted label 'o'*");
+        db.Context.ChangeTracker.HasChanges().Should().BeFalse();
+        db.Context.ChangeTracker.CascadeDeleteTiming.Should().Be(Microsoft.EntityFrameworkCore.ChangeTracking.CascadeTiming.Immediate);
+        await db.Context.SaveChangesAsync();
+        (await db.Store.GetLabelsOfAsync(note)).Should().ContainSingle().Which.Name.Should().Be("o");
+        using var check = db.CreateSecondContext();
+        (await check.Set<Cornhsu.Labeling.EntityFrameworkCore.LabelLink<TestNote, Guid>>().AsNoTracking().CountAsync())
+            .Should().Be(1);
+    }
+
+    [Fact]
+    public async Task 消費端呼叫前自己刪掉的標籤_UpdateAsync存檔時連結照常串聯刪除_串聯時機設定原樣保留()
+    {
+        // lambda 執行期間暫時改了串聯時機;消費端自己在呼叫前做的刪除不受影響,設定也要放回去
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        var doomed = await db.Store.CreateAsync("d");
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "d");
+        db.Context.ChangeTracker.CascadeDeleteTiming = Microsoft.EntityFrameworkCore.ChangeTracking.CascadeTiming.OnSaveChanges;
+        db.Context.Remove(doomed);
+
+        await db.Store.UpdateAsync(target.Id, l => l.Color = "#111111");
+
+        db.Context.ChangeTracker.CascadeDeleteTiming.Should().Be(Microsoft.EntityFrameworkCore.ChangeTracking.CascadeTiming.OnSaveChanges);
+        using var check = db.CreateSecondContext();
+        (await check.Set<Label>().AsNoTracking().Select(l => l.Name).ToListAsync()).Should().Equal("t");
+        (await check.Set<Cornhsu.Labeling.EntityFrameworkCore.LabelLink<TestNote, Guid>>().AsNoTracking().CountAsync())
+            .Should().Be(0);
+    }
+
+    [Fact]
     public async Task 呼叫前消費端自己改了別的標籤還沒存_不算lambda的修改_照常一起存檔()
     {
         // 判斷的是 lambda 前後的差異:消費端自己在呼叫前做的修改不受限制(照舊隨這次存檔送出)

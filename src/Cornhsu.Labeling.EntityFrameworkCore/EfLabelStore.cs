@@ -111,7 +111,19 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
         try
         {
-            update(label);
+            // lambda 執行期間把串聯刪除延到存檔時:EF 預設在 Remove 的當下就把追蹤中的連結串聯標成刪除,
+            // lambda 刪掉別的標籤被拒絕時,只還原標籤的話那些連結會在下一次存檔被刪掉。合法的刪除(消費端自己做的)
+            // 照舊在存檔時串聯;設定一定放回消費端原本的值
+            var cascadeTiming = _db.ChangeTracker.CascadeDeleteTiming;
+            _db.ChangeTracker.CascadeDeleteTiming = CascadeTiming.OnSaveChanges;
+            try
+            {
+                update(label);
+            }
+            finally
+            {
+                _db.ChangeTracker.CascadeDeleteTiming = cascadeTiming;
+            }
 
             // 主鍵一律不准改(目標的與別的標籤的都一樣);偵測變更碰到被改的主鍵只會拋 EF 自己的例外
             if (label.Id != labelId || before.Any(pair => pair.Key.Id != pair.Value.Id))

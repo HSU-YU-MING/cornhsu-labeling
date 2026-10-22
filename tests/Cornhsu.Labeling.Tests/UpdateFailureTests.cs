@@ -465,6 +465,64 @@ public class UpdateFailureTests
         (await other.Set<Label>().AsNoTracking().AnyAsync(l => l.Id == fresh.Id)).Should().BeFalse();
     }
 
+    /// <summary>綁在畫面上的集合:Remove 時會拋例外(例如要在 UI 執行緒上改),但 IsReadOnly 是 false。</summary>
+    private sealed class RefusingCollection : System.Collections.ObjectModel.ObservableCollection<Label>
+    {
+        public bool Armed { get; set; }
+
+        protected override void OnCollectionChanged(System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            if (Armed && e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Remove)
+                throw new NotSupportedException("綁定的集合只能在 UI 執行緒上修改");
+            base.OnCollectionChanged(e);
+        }
+    }
+
+    [Fact]
+    public async Task Children是Remove會拋例外的集合_原本的例外照拋_其餘還原照做()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var children = new RefusingCollection();
+        parent.Children = children;
+        var fresh = new Label { Id = Guid.NewGuid(), Name = "stray", CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
+
+        var act = () => db.Store.UpdateAsync(parent.Id, l =>
+        {
+            l.Children.Add(fresh);
+            children.Armed = true;
+            l.Name = "  ";
+        });
+
+        await act.Should().ThrowAsync<ArgumentException>("呼叫端要拿到的是驗證失敗,不是清理集合時的錯");
+        parent.Name.Should().Be("p");
+        db.Context.Entry(fresh).State.Should().Be(EntityState.Detached);
+        children.Armed = false;
+        await db.Store.CreateAsync("x");
+        (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
+    }
+
+    [Fact]
+    public async Task 還原外鍵時EF的導覽修正碰到不准改的集合_原本的例外照拋_其他項目照樣還原()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var other = await db.Store.CreateAsync("o");
+        var children = new RefusingCollection();
+        parent.Children = children;
+
+        var act = () => db.Store.UpdateAsync(parent.Id, l =>
+        {
+            l.Children.Add(other);   // 還原 other 的 ParentId 時,EF 會把它從這個集合拿掉 → 拋例外
+            children.Armed = true;
+            l.Name = "  ";
+        });
+
+        await act.Should().ThrowAsync<ArgumentException>();
+        parent.Name.Should().Be("p");
+        other.ParentId.Should().BeNull();
+    }
+
     [Fact]
     public async Task 自動偵測變更關掉時_UpdateAsync偵測每個追蹤中的標籤_但不替消費端偵測其他型別的實體()
     {

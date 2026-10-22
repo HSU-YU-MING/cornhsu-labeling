@@ -418,7 +418,12 @@ one that reads its lists with `AsNoTracking()` — does not notice the differenc
   (`"Life/Misc"`) — a breaking change for some future major version.
 - **Label names are trimmed of surrounding whitespace** (consistently, at every entry point).
   Case sensitivity is left to the database collation (SQLite is case-sensitive by default,
-  SQL Server is not), for every method that takes a name.
+  SQL Server is not), for every method that takes a name. A collation decides more than case: SQL
+  Server's, even the case-sensitive `_CS_AS` ones, also treat full- and half-width forms, `ß` and `ss`,
+  ligatures and the two kana scripts as equal and ignore trailing spaces. For exact matching, give
+  `Label.Name` a binary collation after `ApplyLabelModel` — `_BIN2` on SQL Server, `"C"` on
+  PostgreSQL, SQLite's default `BINARY` — with
+  `b.Entity<Label>().Property(l => l.Name).UseCollation(…)`; changing it takes a migration.
 - **Get-or-create has a race**: two paths creating the same name concurrently will collide on the
   unique index, which is handled by re-reading and adopting the existing label. If the re-read
   shows it was not a same-name race, the original exception propagates.

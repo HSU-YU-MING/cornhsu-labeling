@@ -377,7 +377,10 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
   需要這種結構時,請把限定詞放進名稱本身(如「生活·雜項」)。
   未來若支援每父層唯一,勢必伴隨路徑定址(`"生活/雜項"`)的 API 改版,那會是之後某個 major 的破壞性變更。
 - **標籤名稱會自動去除前後空白**(所有輸入入口一致);大小寫語意交由資料庫 collation 決定(SQLite 預設區分大小寫、SQL Server 預設不區分),
-  每個吃名稱的方法都一樣。
+  每個吃名稱的方法都一樣。collation 管的不只大小寫:SQL Server 的 collation(連區分大小寫的 `_CS_AS` 也是)還把全形與半形、
+  `ß` 與 `ss`、連字、平假名與片假名視為相同,並忽略尾端空白。要「完全相同才算」,請在 `ApplyLabelModel` 之後
+  用 `b.Entity<Label>().Property(l => l.Name).UseCollation(…)` 給 `Label.Name` 二進位比對的 collation——
+  SQL Server 用 `_BIN2`、PostgreSQL 用 `"C"`、SQLite 維持預設的 `BINARY`;改 collation 需要一次 migration。
 - **get-or-create 標籤有競態**:兩條路徑同時建同名標籤會撞 unique index,以「重讀驗證後採用既有標籤」處理;若重讀發現不是同名競態,原例外照拋。
 - **並發修改保護**:`Label.ConcurrencyStamp` 是並發戳記(每次透過 store 修改就輪換,不依賴資料庫功能,所有 provider 行為一致)。兩邊同時修改同一個標籤時,後存檔的一方會得到 `DbUpdateConcurrencyException` 而不是默默蓋掉對方——請接住這個例外,重讀後重試或提示使用者。例外拋到你手上之前,store 已經把它正在寫的那個標籤從資料庫重讀,所以透過同一個 store(同一個 context)重讀拿到的就是資料庫的值,重試也才可能成功。這次重讀也會丟掉你自己對那個標籤做、還沒存的修改;衝突若出在你自己改過的別的東西上,store 不會動它。
 - **測試涵蓋 SQLite、SQL Server、PostgreSQL** 三個 provider(同一套測試,CI 每次都跑,EF Core 8;EF Core 9 / 10 那兩條只跑 SQLite)。注意名稱大小寫語意隨 collation 而異:SQLite 預設區分大小寫、SQL Server 預設不區分。

@@ -13,14 +13,22 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
 ### 破壞性變更與遷移
 
 1. **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 依資料庫 collation 比對名稱。**
-   只影響不分大小寫的 collation(SQL Server 預設、`NOCASE` 的 SQLite):大小寫不同的名稱以前查不到(回傳 0 筆、
-   `LabelMatch.All` 整個變空),現在跟 `FindAsync`、貼標、撕標一樣查得到。區分大小寫的 collation(SQLite 與 PostgreSQL
-   的預設)上結果不變。
+   1.x 這四支在記憶體以 Ordinal(逐字元完全相同)比對名稱,所以比對規則與 Ordinal 不同的 collation 都會受影響:
+   以前只差在下面這些地方的名稱查不到(回傳 0 筆,`LabelMatch.All` 整個變空),現在跟 `FindAsync`、貼標、撕標一樣查得到。
+   - 不分大小寫(SQL Server 預設的 `SQL_Latin1_General_CP1_CI_AS`、`NOCASE` 的 SQLite):`Paper` 對 `paper`。
+   - 不分重音(`_AI`):`Cafe` 對 `Café`。
+   - **區分大小寫的 SQL Server collation 也有差**:`Latin1_General_CS_AS` 仍把全形與半形字(`ＡＢＣ`／`ABC`)、
+     `ß` 與 `ss`、`ﬁ` 連字與 `fi`、平假名與片假名、尾端空白視為相同;連 `_BIN2` 也忽略尾端空白
+     (store 寫入與查詢時都會去掉前後空白,只有繞過 store 寫進去的舊資料會遇到)。
+   - SQLite 預設的 `BINARY` 與 PostgreSQL 的 deterministic collation(預設)逐位元組比對,結果不變。
+   遷移:
    - 舊:為了讓查詢對得上,先 `FindAsync(name)` 取回儲存的寫法再傳給 `FindByLabelAsync(label.Name)`。
      新:直接 `FindByLabelAsync(name)`,舊寫法照樣可用。
-   - 舊:依賴「大小寫要完全一樣才查得到」。新:把 `Label.Name` 設成區分大小寫的 collation
-     (`b.Entity<Label>().Property(l => l.Name).UseCollation("…")`,在 `ApplyLabelModel` 之後),
-     名稱的唯一性、`FindAsync`、貼標與這四支查詢會一起改成區分大小寫——套件不再有只對其中幾支成立的比對規則。
+   - 舊:依賴「完全相同才查得到」。新:把 `Label.Name` 改成二進位比對的 collation——SQL Server 用 `_BIN2`
+     (例如 `Latin1_General_100_BIN2`)、PostgreSQL 用 `"C"`、SQLite 維持預設的 `BINARY`:
+     在 `ApplyLabelModel` 之後加 `b.Entity<Label>().Property(l => l.Name).UseCollation("Latin1_General_100_BIN2")`。
+     **改 collation 會改欄位定義與唯一索引,需要一次 migration**;改完之後,名稱的唯一性、`FindAsync`、貼標與這四支查詢
+     會一起改成二進位比對(原本只差大小寫、被唯一索引擋下的名稱也能並存)——套件不再有只對其中幾支成立的比對規則。
 2. **`UpdateAsync` 的 lambda 只能改目標標籤本身;別的標籤只能經 `Parent`／`Children` 搬移。** 下面這些 1.x 會照樣存檔
    (或在資料庫才拋 `DbUpdateException`,或靜默地丟掉),現在拋 `InvalidOperationException`
    (`update may only change the label being updated (and move other labels through Parent or Children), but it …`),

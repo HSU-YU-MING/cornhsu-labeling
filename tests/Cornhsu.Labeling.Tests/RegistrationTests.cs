@@ -363,4 +363,16 @@ public class RegistrationTests
         registry.Invoking(r => r.Labelable<TestNote>()).Should().NotThrow();
         registry.Invoking(r => r.AutoCreateLabels = false).Should().NotThrow();
     }
+
+    [Fact]
+    public void 封存旗標是volatile_其他執行緒看得到封存()
+    {
+        // registry 是全 App 單例,封存與之後的註冊、設定可能在不同執行緒上。沒加鎖的普通 bool 不保證另一條執行緒
+        // 立刻看得到;並發可見性測不穩,所以直接釘住欄位帶 volatile 修飾
+        var field = typeof(LabelRegistry).GetField("_sealed",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        field.Should().NotBeNull();
+        field!.GetRequiredCustomModifiers().Should().Contain(typeof(System.Runtime.CompilerServices.IsVolatile));
+    }
 }

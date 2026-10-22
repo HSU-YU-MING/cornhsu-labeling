@@ -12,7 +12,7 @@ namespace Cornhsu.Labeling.EntityFrameworkCore;
 public sealed class LabelRegistry
 {
     private readonly List<ILabelableOperations> _descriptors = new();
-    private bool _sealed;
+    private volatile bool _sealed;   // 全 App 單例:封存與之後的註冊、設定可能在不同執行緒上
     private string _labelTableName = "Label";
     private string _linkTablePrefix = "LabelLink_";
 

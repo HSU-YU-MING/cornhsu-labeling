@@ -4,11 +4,17 @@ namespace Cornhsu.Labeling.EntityFrameworkCore;
 /// The registry of labelable types. There must be exactly one per application (Singleton),
 /// because EF Core's model cache is keyed by DbContext type — handing the same DbContext a
 /// different registry would give you a wrongly cached model.
+/// <see cref="ServiceCollectionExtensions.AddLabeling{TContext}"/> and <see cref="LabelStoreFactory.Create{TContext}"/>
+/// seal it: from then on the registry is immutable, and registering a type or setting any property throws
+/// <see cref="InvalidOperationException"/>. Configure everything before that point.
 /// </summary>
 public sealed class LabelRegistry
 {
     private readonly List<ILabelableOperations> _descriptors = new();
     private bool _sealed;
+    private string _labelTableName = "Label";
+    private string _linkTablePrefix = "LabelLink_";
+    private bool _autoCreateLabels = true;
 
     /// <summary>Descriptors of every registered type (only the descriptive information is public).</summary>
     public IReadOnlyList<ILabelableDescriptor> Descriptors => _descriptors;
@@ -16,19 +22,35 @@ public sealed class LabelRegistry
     /// <summary>內部管線視角(建表與連結表操作)。</summary>
     internal IReadOnlyList<ILabelableOperations> Operations => _descriptors;
 
-    /// <summary>Table name for Label itself; defaults to "Label".</summary>
-    public string LabelTableName { get; set; } = "Label";
+    /// <summary>Table name for Label itself; defaults to "Label". Cannot be set once the registry is sealed.</summary>
+    public string LabelTableName
+    {
+        get => _labelTableName;
+        set => _labelTableName = Unsealed(nameof(LabelTableName), value);
+    }
 
-    /// <summary>Table-name prefix for link tables; defaults to "LabelLink_". The full name is prefix + TypeKey.</summary>
-    public string LinkTablePrefix { get; set; } = "LabelLink_";
+    /// <summary>
+    /// Table-name prefix for link tables; defaults to "LabelLink_". The full name is prefix + TypeKey.
+    /// Cannot be set once the registry is sealed.
+    /// </summary>
+    public string LinkTablePrefix
+    {
+        get => _linkTablePrefix;
+        set => _linkTablePrefix = Unsealed(nameof(LinkTablePrefix), value);
+    }
 
     /// <summary>
     /// Whether attaching an unknown label creates it automatically (get-or-create); defaults to true.
     /// Apps with a "curated" label set (labels carry colors/icons and are created deliberately through an
     /// admin screen) should set this to false: <c>AttachAsync</c> then throws a clear exception for an
     /// unknown label instead of silently creating a bare one with no color and no icon.
+    /// Cannot be set once the registry is sealed.
     /// </summary>
-    public bool AutoCreateLabels { get; set; } = true;
+    public bool AutoCreateLabels
+    {
+        get => _autoCreateLabels;
+        set => _autoCreateLabels = Unsealed(nameof(AutoCreateLabels), value);
+    }
 
     /// <summary>
     /// Registers a labelable type. The key type is inferred from <see cref="ILabelable{TKey}"/>,
@@ -58,6 +80,14 @@ public sealed class LabelRegistry
     }
 
     internal void Seal() => _sealed = true;
+
+    /// <summary>
+    /// 封存後 registry 整個不可變。表名與前綴會進 EF 的 model,而 model 以 DbContext 型別快取:
+    /// 封存後再改,名稱會和快取的 model 默默對不上(沒有任何錯誤訊息);AutoCreateLabels 不影響 model,
+    /// 但設定物件「封存後全部不可改」比較好理解。
+    /// </summary>
+    private T Unsealed<T>(string property, T value)
+        => _sealed ? throw new InvalidOperationException($"LabelRegistry is sealed; {property} can no longer be changed.") : value;
 
     internal ILabelableOperations Require<TEntity>() where TEntity : class, ILabelable
         => _descriptors.FirstOrDefault(d => d.ClrType == typeof(TEntity))

@@ -13,9 +13,10 @@ public static class LabelStoreFactory
     /// <summary>
     /// Creates an <see cref="ILabelStore"/> over the given DbContext and registry.
     /// The returned store does not own the context — its lifetime and disposal stay with the caller.
-    /// Like <see cref="ServiceCollectionExtensions.AddLabeling{TContext}"/>, this seals the registry:
-    /// register every labelable type before the first call, because <see cref="LabelRegistry.Labelable{TEntity}"/>
-    /// throws <see cref="InvalidOperationException"/> afterwards. Creating more stores over the same registry is fine.
+    /// Like <see cref="ServiceCollectionExtensions.AddLabeling{TContext}"/>, this seals the registry, which makes it
+    /// immutable: register every labelable type and set every registry property before the first call, because
+    /// <see cref="LabelRegistry.Labelable{TEntity}"/> and the property setters throw <see cref="InvalidOperationException"/>
+    /// afterwards. Creating more stores over the same registry is fine.
     /// </summary>
     /// <typeparam name="TContext">Your application's DbContext type.</typeparam>
     /// <param name="context">

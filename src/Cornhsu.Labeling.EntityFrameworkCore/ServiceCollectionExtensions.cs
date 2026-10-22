@@ -9,10 +9,12 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers the labeling system: builds and seals a <see cref="LabelRegistry"/> (Singleton),
     /// and registers <see cref="ILabelStore"/> (Scoped) backed by <typeparamref name="TContext"/>.
+    /// Once sealed the registry is immutable, so register the types and set the registry's properties
+    /// inside <paramref name="configure"/>.
     /// </summary>
     /// <typeparam name="TContext">Your application's DbContext.</typeparam>
     /// <param name="services">The DI service collection.</param>
-    /// <param name="configure">Callback that registers the labelable types.</param>
+    /// <param name="configure">Callback that registers the labelable types and sets the registry's properties.</param>
     public static IServiceCollection AddLabeling<TContext>(
         this IServiceCollection services,
         Action<LabelRegistry> configure)

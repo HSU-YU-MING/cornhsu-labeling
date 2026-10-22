@@ -250,6 +250,57 @@ public class RegistrationTests
         (await store.FindByLabelAsync("論文")).Should().ContainSingle();
     }
 
+    // ---- 2.0:封存後 registry 整個不可變,三個屬性也不能再設定(兩條路徑都一樣) ----
+
+    private static void SetProperty(LabelRegistry registry, string property)
+    {
+        switch (property)
+        {
+            case nameof(LabelRegistry.LabelTableName): registry.LabelTableName = "Other"; break;
+            case nameof(LabelRegistry.LinkTablePrefix): registry.LinkTablePrefix = "Other_"; break;
+            default: registry.AutoCreateLabels = false; break;
+        }
+    }
+
+    [Theory]
+    [InlineData(nameof(LabelRegistry.LabelTableName))]
+    [InlineData(nameof(LabelRegistry.LinkTablePrefix))]
+    [InlineData(nameof(LabelRegistry.AutoCreateLabels))]
+    public void AddLabeling封存後_設定屬性拋例外_值不變(string property)
+    {
+        using var db = new TestDb();   // AddLabeling 內部已 Seal()
+
+        var act = () => SetProperty(db.Registry, property);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage($"LabelRegistry is sealed; {property} can no longer be changed.");
+        (db.Registry.LabelTableName, db.Registry.LinkTablePrefix, db.Registry.AutoCreateLabels)
+            .Should().Be(("Label", "LabelLink_", true));
+    }
+
+    [Theory]
+    [InlineData(nameof(LabelRegistry.LabelTableName))]
+    [InlineData(nameof(LabelRegistry.LinkTablePrefix))]
+    [InlineData(nameof(LabelRegistry.AutoCreateLabels))]
+    public void Factory建立store之後_設定屬性拋例外_值不變(string property)
+    {
+        var registry = new LabelRegistry { AutoCreateLabels = false };   // 封存前照常可以設定
+        registry.Labelable<TestNote>();
+        using var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var options = new DbContextOptionsBuilder<TestDbContext>()
+            .UseSqlite(conn).EnableServiceProviderCaching(false).Options;
+        using var context = new TestDbContext(options, registry);
+        LabelStoreFactory.Create(context, registry);
+
+        var act = () => SetProperty(registry, property);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage($"LabelRegistry is sealed; {property} can no longer be changed.");
+        (registry.LabelTableName, registry.LinkTablePrefix, registry.AutoCreateLabels)
+            .Should().Be(("Label", "LabelLink_", false));
+    }
+
     [Fact]
     public void Factory的參數檢查失敗時_不封存registry()
     {
@@ -259,5 +310,6 @@ public class RegistrationTests
 
         act.Should().Throw<ArgumentNullException>();
         registry.Invoking(r => r.Labelable<TestNote>()).Should().NotThrow();
+        registry.Invoking(r => r.AutoCreateLabels = false).Should().NotThrow();
     }
 }

@@ -632,6 +632,73 @@ public class WriteFailureTests
     }
 
     [Fact]
+    public async Task 顯式交易內UpdateAsync提交後才拋例外_rollback後追蹤器回到資料庫的值_重試成功()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var label = await db.Store.CreateAsync("論文");
+        var stamp = label.ConcurrencyStamp;
+
+        await using (var tx = await db.Context.Database.BeginTransactionAsync())
+        {
+            after.Armed = true;
+            var act = () => db.Store.UpdateAsync(label.Id, l => l.Color = "#FF0000");
+            await act.Should().ThrowAsync<InvalidOperationException>();
+            await tx.RollbackAsync();
+        }
+
+        // EF 已經接受了那次存檔(原值變成新值);還原要連原值一起放回去,不然重試會帶著新戳記去撞並發例外
+        label.Color.Should().BeNull();
+        label.ConcurrencyStamp.Should().Be(stamp);
+        db.Context.Entry(label).Property(l => l.ConcurrencyStamp).OriginalValue.Should().Be(stamp);
+        await db.Store.UpdateAsync(label.Id, l => l.Color = "#00FF00");
+        (await StoredLabelsAsync(db)).Single().Color.Should().Be("#00FF00");
+    }
+
+    [Fact]
+    public async Task 顯式交易內RenameAsync提交後才拋例外_rollback後重試成功()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var label = await db.Store.CreateAsync("原名");
+
+        await using (var tx = await db.Context.Database.BeginTransactionAsync())
+        {
+            after.Armed = true;
+            var act = () => db.Store.RenameAsync(label.Id, "新名");
+            await act.Should().ThrowAsync<InvalidOperationException>();
+            await tx.RollbackAsync();
+        }
+
+        label.Name.Should().Be("原名");
+        await db.Store.RenameAsync(label.Id, "別名");
+        (await StoredLabelsAsync(db)).Single().Name.Should().Be("別名");
+    }
+
+    [Fact]
+    public async Task 顯式交易內DeleteAsync提交後才拋例外_rollback後標籤回到追蹤器_重試成功()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var label = await db.Store.CreateAsync("論文");
+        label.Color = "#111111";   // 消費端自己的未存修改,跟著那次存檔一起被 EF 接受
+
+        await using (var tx = await db.Context.Database.BeginTransactionAsync())
+        {
+            after.Armed = true;
+            var act = () => db.Store.DeleteAsync(label.Id);
+            await act.Should().ThrowAsync<InvalidOperationException>();
+            await tx.RollbackAsync();
+        }
+
+        var entry = db.Context.Entry(label);
+        entry.State.Should().Be(EntityState.Modified, "消費端自己的修改還是待存");
+        entry.Property(l => l.Color).OriginalValue.Should().BeNull("原值要回到資料庫裡的值");
+        await db.Store.DeleteAsync(label.Id);
+        (await StoredLabelsAsync(db)).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task 環境交易內DeleteAsync提交後才拋例外_一律還原()
     {
         // EF 的 SQLite provider 不支援環境交易(System.Transactions),這條只在 SQL Server / PostgreSQL 那兩條線上有意義

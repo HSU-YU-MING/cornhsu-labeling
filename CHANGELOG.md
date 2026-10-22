@@ -57,8 +57,9 @@
   唯一的例外是這次要寫的那個標籤:並發衝突時它一律重讀,連你自己對它還沒存的修改也一起丟掉,
   否則舊戳記留在追蹤器裡,重試永遠撞同一個衝突。存檔已經提交、例外是之後才拋的(例如你的 `SavedChanges`
   攔截器出錯)時不還原:寫進去的就是寫進去了,追蹤器維持提交後的樣子——但你自己開了交易(顯式交易或
-  `TransactionScope`)時一律還原,因為那時還沒真的提交,你可能接著 rollback;rollback 之後請照 EF Core 的建議
-  丟掉那個 context(它追蹤的並發戳記可能已經和資料庫對不上,README 寫明了)。
+  `TransactionScope`)時一律還原,因為那時還沒真的提交,你可能接著 rollback:連 EF 已經接受的原值與並發戳記
+  一起放回呼叫前的樣子,rollback 之後透過同一個 store 重試就能成功(1.1.0 會撞並發例外)。同一次存檔裡
+  被 EF 接受的、你自己的修改不在此列;context 帶著這種修改的話,rollback 之後仍照 EF Core 的建議丟掉它。
   例外型別與訊息不變。
 - **context 關掉自動偵測變更(`ChangeTracker.AutoDetectChangesEnabled = false`)時,`RenameAsync`／`UpdateAsync`
   也會存檔**(patch)。這兩支直接改追蹤中的 `Label` 屬性,以前靠 `SaveChanges` 自己偵測變更;關掉之後改名、

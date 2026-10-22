@@ -19,6 +19,7 @@ internal sealed class TrackerSnapshot
     private readonly HashSet<object> _addedSet = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<object> _owned = new(ReferenceEqualityComparer.Instance);
     private List<(EntityEntry Entry, EntityState State)>? _pending;
+    private readonly Dictionary<object, PropertyValues> _preSaveOriginals = new(ReferenceEqualityComparer.Instance);
 
     // FromOriginals:記下時剛偵測過而且是 Unchanged——呼叫前的值就是原值,不另外複製,還原時直接用原值
     private sealed record Item(
@@ -83,7 +84,13 @@ internal sealed class TrackerSnapshot
         {
             if ((entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
                 && seen.Add(entry.Entity))
+            {
                 pending.Add((entry, entry.State));
+                // 存檔前的原值(資料庫裡的值):EF 接受存檔時會把原值換成新值。消費端自己的交易之後若 rollback,
+                // 還原要連原值一起放回去,追蹤器才會跟資料庫對得上(否則重試會帶著新戳記撞並發例外)
+                if (entry.State is EntityState.Modified or EntityState.Deleted)
+                    _preSaveOriginals[entry.Entity] = entry.OriginalValues.Clone();
+            }
         }
 
         foreach (var entity in _added)
@@ -169,7 +176,7 @@ internal sealed class TrackerSnapshot
             {
                 try
                 {
-                    RestoreItem(item);
+                    RestoreItem(item, _preSaveOriginals.TryGetValue(item.Entry.Entity, out var originals) ? originals : null);
                 }
                 catch (Exception)
                 {
@@ -189,11 +196,16 @@ internal sealed class TrackerSnapshot
         }
     }
 
-    private static void RestoreItem(Item item)
+    private static void RestoreItem(Item item, PropertyValues? preSaveOriginals)
     {
         var entry = item.Entry;
         if (entry.State == EntityState.Detached && item.State != EntityState.Detached)
             entry.State = item.State;   // 例如被 Remove 掉的 Added 項目:EF 對它 Remove 是直接 detach
+
+        // 存檔已被 EF 接受、但消費端的交易還沒提交時,原值已經被換成新值:先放回存檔前的原值。
+        // 存檔沒被接受時原值沒變,這一步等於什麼都沒做
+        if (preSaveOriginals is not null)
+            entry.OriginalValues.SetValues(preSaveOriginals);
 
         // 外鍵改回去時,EF 會順著把 Parent / Children 這類導覽屬性一起修正回來
         if (item.Values is not null)

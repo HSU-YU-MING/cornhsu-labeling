@@ -428,10 +428,11 @@ in 1.1.0. A context that tracks few labels — for example one that reads its la
   stays usable. Your own pending changes are left as they were, with one exception: after a
   concurrency conflict, the label being written is reloaded (see "Concurrent modification protection" above).
   Inside a transaction of your own (`BeginTransaction`, or a `TransactionScope`), a failed write is
-  always taken back, even if EF had already accepted it, because you may still roll back. After
-  rolling back your own transaction, discard that DbContext, as EF Core recommends: the values it
-  tracks, concurrency stamps included, may no longer match the database, and a retry through it can
-  fail with `DbUpdateConcurrencyException`.
+  taken back even if EF had already accepted it, because you may still roll back: the labels and links
+  it touched return to their state before the call, original values and concurrency stamps included,
+  so after a rollback a retry through the same store works. Changes of your own that EF accepted in
+  that same save are not taken back; if the context carried any, discard it after rolling back, as
+  EF Core recommends.
 - **EF Core 8+ only.** The dependency floor is 8.0.11 (the 8.0-series version with known
   vulnerability advisories patched); consumers on EF Core 9 or 10 unify automatically.
 - For tests, use **SQLite in-memory rather than the EF InMemory provider** — the latter does not

@@ -338,17 +338,20 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 
 | 操作 | 中位數 |
 |---|---|
-| `FindByLabelAsync`(10% 命中 = 5,000 筆、跨 5 型別) | ~18 ms |
+| `FindByLabelAsync`(10% 命中 = 5,000 筆、跨 5 型別) | ~21 ms |
 | `FindByLabelAsync`(0.1% 命中 = 50 筆) | ~1 ms |
-| `FindByLabelAsync`(含子孫階層、500 筆) | ~2 ms |
+| `FindByLabelAsync`(含子孫階層、500 筆) | ~3 ms |
 | `QueryByLabelAsync<T>` + `CountAsync` | ~1 ms |
 | 50 筆逐筆 `GetLabelsOfAsync`(N+1 反模式) | ~5 ms |
 | `GetLabelsOfManyAsync`(50 筆一次查詢) | ~1 ms |
-| `QueryByLabelsAsync<T>`(All / Any,2 標籤) | ~1.5 ms |
+| `QueryByLabelsAsync<T>`(All / Any,2 標籤) | ~2 ms |
 
-結論:跨型別查詢的「每型別一次查詢」樸素策略在此規模綽綽有餘,v1.0 不做查詢合併優化。
+結論:跨型別查詢的「每型別一次查詢」樸素策略在此規模綽綽有餘,所以不做查詢合併優化。
 清單畫面請用 `GetLabelsOfManyAsync`,不要在迴圈裡呼叫 `GetLabelsOfAsync`
 (本機 SQLite 差 5 倍;有網路延遲的資料庫差的是 49 次 roundtrip)。
+
+以名稱查詢的 API 每個名稱各自下一次小查詢(含子孫時再讀一次階層),比對規則交給資料庫的 collation。
+1.1.0 是一次撈出全部標籤、在記憶體比對名稱;benchmark 上兩者的差異在量測雜訊之內。
 
 `UpdateAsync` 每次呼叫會把 DbContext 追蹤中的標籤看過兩遍:lambda 執行前一遍,更新被擋下或存檔失敗時才還原得回去;
 lambda 執行後一遍,經 `Parent` 或 `Children` 導覽屬性換的父標籤才檢查得到循環。追蹤 1,000 個標籤
@@ -360,12 +363,12 @@ lambda 執行後一遍,經 `Parent` 或 `Children` 導覽屬性換的父標籤�
 - **實體主鍵支援 `int`/`long`/`Guid`/`string` 等具備相等運算子的型別,可在同一個 App 混用**;但 `Label` 本體的主鍵固定是 `Guid`(它是套件自有的表)。
 - **`LabelHit.EntityId` 是 `object`**——跨型別查詢的命中可能來自不同主鍵型別,這是泛型主鍵的必要代價;用 `EntityIdAs<TKey>()` 取回強型別。
 - **跨型別查詢是 N 次查詢**(N = 已註冊型別數)。樸素版先行,實測有瓶頸再優化成 `UNION ALL`。
-- **`LabelRegistry` 必須全 App 單例。** EF Core 的 model cache 以 DbContext 型別為 key;同一個 DbContext 型別拿到不同 registry 會拿到錯的快取 model 且不會報錯。`AddLabeling` 已自動註冊為 Singleton。多租戶各自不同的可標記型別 v1 不支援(需自訂 `IModelCacheKeyFactory`)。
+- **`LabelRegistry` 必須全 App 單例。** EF Core 的 model cache 以 DbContext 型別為 key;同一個 DbContext 型別拿到不同 registry 會拿到錯的快取 model 且不會報錯。`AddLabeling` 已自動註冊為 Singleton。多租戶各自不同的可標記型別不支援(需自訂 `IModelCacheKeyFactory`)。
 - **標籤名稱全域唯一,包含跨階層**——「工作/雜項」和「生活/雜項」不能各有一個叫「雜項」的子標籤。
   這是刻意取捨:整個 API 以名稱定址(`AttachAsync`、`FindByLabelAsync` 都吃名稱字串),
   一旦允許不同父層下同名,所有名稱定址的呼叫都會變成歧義。
   需要這種結構時,請把限定詞放進名稱本身(如「生活·雜項」)。
-  未來若支援每父層唯一,勢必伴隨路徑定址(`"生活/雜項"`)的 API 改版,屬 v2 範疇。
+  未來若支援每父層唯一,勢必伴隨路徑定址(`"生活/雜項"`)的 API 改版,那會是之後某個 major 的破壞性變更。
 - **標籤名稱會自動去除前後空白**(所有輸入入口一致);大小寫語意交由資料庫 collation 決定(SQLite 預設區分大小寫、SQL Server 預設不區分),
   每個吃名稱的方法都一樣。
 - **get-or-create 標籤有競態**:兩條路徑同時建同名標籤會撞 unique index,以「重讀驗證後採用既有標籤」處理;若重讀發現不是同名競態,原例外照拋。

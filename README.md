@@ -361,18 +361,23 @@ links, medians on an ordinary desktop; the harness is in
 
 | Operation | Median |
 |---|---|
-| `FindByLabelAsync` (10% hit rate = 5,000 rows across 5 types) | ~18 ms |
+| `FindByLabelAsync` (10% hit rate = 5,000 rows across 5 types) | ~21 ms |
 | `FindByLabelAsync` (0.1% hit rate = 50 rows) | ~1 ms |
-| `FindByLabelAsync` (including descendants, 500 rows) | ~2 ms |
+| `FindByLabelAsync` (including descendants, 500 rows) | ~3 ms |
 | `QueryByLabelAsync<T>` + `CountAsync` | ~1 ms |
 | 50 individual `GetLabelsOfAsync` calls (the N+1 anti-pattern) | ~5 ms |
 | `GetLabelsOfManyAsync` (50 rows in one query) | ~1 ms |
-| `QueryByLabelsAsync<T>` (All / Any, 2 labels) | ~1.5 ms |
+| `QueryByLabelsAsync<T>` (All / Any, 2 labels) | ~2 ms |
 
 Conclusion: the naive "one query per type" strategy for cross-type queries is more than adequate
-at this scale, so v1.0 does not merge queries. For list views use `GetLabelsOfManyAsync` rather
+at this scale, so the package does not merge them. For list views use `GetLabelsOfManyAsync` rather
 than calling `GetLabelsOfAsync` in a loop — it is 5× faster on local SQLite, and on a database
 with network latency the difference is 49 round trips.
+
+The name-based queries resolve each name with a small query of its own (plus one read of the
+hierarchy when descendants are included), so the database's collation decides what matches. Against
+1.1.0, which read every label in one query and matched names in memory, the benchmark shows no
+difference beyond noise.
 
 `UpdateAsync` looks at every label the DbContext is tracking, twice per call: once before your lambda
 runs, so it can roll the changes back if the update is rejected or the save fails, and once after, so
@@ -392,7 +397,7 @@ in 1.1.0. A context that tracks few labels — for example one that reads its la
 - **`LabelRegistry` must be an application-wide singleton.** EF Core's model cache is keyed by
   DbContext type, so handing the same DbContext type a different registry gives you a wrongly
   cached model — silently, with no error. `AddLabeling` already registers it as a Singleton.
-  Multi-tenant setups where each tenant has different labelable types are not supported in v1
+  Multi-tenant setups where each tenant has different labelable types are not supported
   (that needs a custom `IModelCacheKeyFactory`).
 - **Label names are globally unique, including across the hierarchy** — "Work/Misc" and
   "Life/Misc" cannot both have a child named "Misc". This is a deliberate trade-off: the entire
@@ -400,7 +405,7 @@ in 1.1.0. A context that tracks few labels — for example one that reads its la
   allowing duplicates under different parents would make every name-addressed call ambiguous.
   When you need that structure, put the qualifier in the name itself (e.g. "Life · Misc").
   Supporting per-parent uniqueness in future would necessarily come with a path-addressing API
-  (`"Life/Misc"`), which is v2 territory.
+  (`"Life/Misc"`) — a breaking change for some future major version.
 - **Label names are trimmed of surrounding whitespace** (consistently, at every entry point).
   Case sensitivity is left to the database collation (SQLite is case-sensitive by default,
   SQL Server is not), for every method that takes a name.

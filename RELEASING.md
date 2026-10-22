@@ -7,8 +7,8 @@
 2. 推 tag：
 
 ```bash
-git tag v1.2.0
-git push origin v1.2.0
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 3. `.github/workflows/release.yml` 接手：從 tag 導出版本 → restore → build → test →

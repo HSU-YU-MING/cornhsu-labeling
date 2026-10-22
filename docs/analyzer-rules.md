@@ -39,7 +39,9 @@ services.AddLabeling<AppDbContext>(r =>
 The message names the type the way a registration has to spell it: a nested type with its containing
 type (`Outer.Note`), a generic type with its type parameters (`Box<T>`, `Outer<T>.Note`). For a
 generic entity, registering any constructed form (`r.Labelable<Box<string>>()`) counts as registering
-the declaration.
+the declaration. (Before 2.0 the message used the bare type name — `Type 'Note'` for `Outer.Note`,
+`Type 'Box'` for `Box<T>` — and a registration with type arguments did not count, so those types were
+reported even when registered.)
 
 **When to suppress.** The analyzer only sees one compilation at a time, and only calls that name the
 type directly. The warning is a false positive when:

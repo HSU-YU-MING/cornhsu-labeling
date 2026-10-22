@@ -22,7 +22,7 @@ D:\擴充功能\nuget\Labeling\cornhsu-labeling\   ← 真正的 git repo 在這
 ## 指令
 
 - 建置：`dotnet build Cornhsu.Labeling.slnx`
-- 測試：`dotnet test`——285 條（主測試 265 + analyzer 20）。動了 `src/` 的任何東西**必跑**。
+- 測試：`dotnet test`——292 條（主測試 272 + analyzer 20）。動了 `src/` 的任何東西**必跑**。
   預設走 **SQLite in-memory**，秒級。
 - 換 provider 跑同一套測試（環境變數，見 `tests/.../TestInfrastructure.cs`）：
 
@@ -74,6 +74,8 @@ D:\擴充功能\nuget\Labeling\cornhsu-labeling\   ← 真正的 git repo 在這
   `Cornhsu.Labeling.EntityFrameworkCore` **1.1.0**（`QuillNest.csproj:47`，2026-08-27 的 `3efde5c` 從 1.0.0 升上來；
   走公開 nuget.org，不是本機 feed）。
   改公開 API 或 schema 時，它是唯一的真實使用者，值得順手看一眼。
+  升到 2.0.0 不必改程式（2026-10-22 評估）：它的 `UpdateAsync` lambda 只改目標標籤的 `Name`／`Color`／`Icon`，
+  名稱查詢傳的是從資料庫讀出來的 `label.Name`，SQLite 預設 BINARY collation 上比對結果與 1.x 相同。
 
 ## 專案界線：src 乾淨、tests/samples 才碰 provider
 
@@ -108,9 +110,15 @@ README 的 Design trade-offs 已經完整寫了「為什麼是每型別一張連
   要擴充走 1:1 伴生表。**「讓 Label 支援泛型 / 讓使用者繼承 Label」這條路已經評估過並否決**，
   理由是它會把泛型汙染整個套件、把侵入性帶回來（README「Extending Label」有寫）。
 - **標籤名稱全域唯一（含跨階層）。** 整個 API 以名稱定址，允許同名會讓每一個名稱呼叫變歧義。
-  要改成「每父層唯一」必然伴隨路徑定址 API——那是 v2，見 ROADMAP。
+  要改成「每父層唯一」必然伴隨路徑定址 API——那是之後某個 major 的事，見 ROADMAP「未來 major 的範疇」。
+- **名稱一律交給資料庫比對**（2.0，決策 H3）。每個吃名稱的 API（含 `FindByLabel(s)Async`／`QueryByLabel(s)Async`）
+  都把正規化後的名稱交給資料庫，大小寫語意跟 collation 走。**不要在記憶體用 `StringComparer` 對名稱**——
+  記憶體不知道資料庫的 collation；1.x 的四支名稱查詢就是這樣，在不分大小寫的資料庫上跟其他 API 對不上。
+- **`UpdateAsync` 的 lambda 只能改目標標籤**（2.0，決策 D2 選項 B）。別的標籤只准經 `Parent`／`Children` 搬移
+  （被搬的也輪換並發戳記）；改別的標籤的其他欄位、帶進新標籤、刪掉別的標籤都拋例外。判斷靠 lambda 前後的差異，
+  所以 lambda 之前那次 `DetectLabelChanges()` 不能拿掉：沒有它，消費端自己還沒偵測的修改會被當成 lambda 做的。
 - **跨型別查詢就是 N 次查詢**（N = 註冊型別數）。已量測：5 型別 × 10k 筆、12 萬連結
-  仍在 ~18 ms。合併成 `UNION ALL` 的觸發條件寫在 ROADMAP，**不要為了漂亮先做**。
+  仍在 ~20 ms。合併成 `UNION ALL` 的觸發條件寫在 ROADMAP，**不要為了漂亮先做**。
 - **`LabelHit.EntityId` 是 `object`** 是泛型主鍵的必然代價，不是待辦。ROADMAP 已明文不做。
 - **標籤是全域的、跨 tenant 互相看得見**（SECURITY.md 有明文聲明）。
   這是設計，不是漏洞；有人回報「A 租戶查到 B 的資料」時不要當 bug 修。
@@ -259,4 +267,4 @@ XamlContrast 有 `verify-readme-sample.ps1`、Parity 有 `verify-readme-facts.ps
 - CHANGELOG 的版本段落**就是 GitHub Release 的內容**（`release.yml` 直接抓那一節），
   寫得夠不夠好等於 Releases 頁的品質。
 - 判斷「這是不是待辦」之前先看 ROADMAP.md——那裡把「明文不做」「有觸發條件才做」
-  「v2 範疇」分開列了，很多看起來像遺漏的東西是已經決定過的。
+  「未來 major 的範疇」分開列了，很多看起來像遺漏的東西是已經決定過的。

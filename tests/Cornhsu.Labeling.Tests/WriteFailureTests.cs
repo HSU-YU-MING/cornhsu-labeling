@@ -579,31 +579,34 @@ public class WriteFailureTests
     [Fact]
     public async Task 攔截器把部分待存項目改回Unchanged後資料庫失敗_只要還有沒被接受的就照常還原()
     {
-        using var db = new TestDb(null, new KeepLinks());
+        // 撕兩條連結;攔截器在送出前把其中一條改回 Unchanged,之後資料庫失敗。
+        // 「有一項變成 Unchanged」不代表存檔被接受:另一條還在待刪狀態,要照常還原,不然下次存檔會把它刪掉
+        using var db = new TestDb(null, new KeepFirstDeletedLink());
         var note = await db.AddNoteAsync();
-        await db.Store.AttachAsync(note, "論文");   // 連結留在追蹤器:刪標籤時 EF 會把它 cascade 成刪除
-        var label = (await db.Store.FindAsync("論文"))!;
+        await db.Store.AttachAsync(note, "甲", "乙");
         var dup = new TestNote { Id = await InsertNoteElsewhereAsync(db.CreateSecondContext), Title = "撞主鍵" };
         db.Context.Add(dup);
 
-        var act = () => db.Store.DeleteAsync(label.Id);
+        var act = () => db.Store.DetachAsync(note, "甲", "乙");
         await act.Should().ThrowAsync<DbUpdateException>();
 
-        db.Context.Entry(label).State.Should().Be(EntityState.Unchanged, "標籤還在待刪狀態,這次存檔沒有被接受");
+        db.Context.ChangeTracker.Entries<LabelLink<TestNote, Guid>>().Should().HaveCount(2)
+            .And.OnlyContain(e => e.State == EntityState.Unchanged);
         db.Context.Entry(dup).State = EntityState.Detached;
         await db.Context.SaveChangesAsync();
-        (await StoredLabelsAsync(db)).Should().ContainSingle();
+        (await StoredLinkCountAsync(db)).Should().Be(2);
     }
 
-    /// <summary>消費端規則:連結不准經 cascade 刪掉,存檔前把被標成刪除的連結改回 Unchanged。</summary>
-    private sealed class KeepLinks : SaveChangesInterceptor
+    /// <summary>消費端規則:存檔前把第一條被標成刪除的連結改回 Unchanged(只動一條)。</summary>
+    private sealed class KeepFirstDeletedLink : SaveChangesInterceptor
     {
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
         {
-            foreach (var entry in eventData.Context!.ChangeTracker.Entries<LabelLink<TestNote, Guid>>()
-                         .Where(e => e.State == EntityState.Deleted).ToList())
-                entry.State = EntityState.Unchanged;
+            var first = eventData.Context!.ChangeTracker.Entries<LabelLink<TestNote, Guid>>()
+                .FirstOrDefault(e => e.State == EntityState.Deleted);
+            if (first is not null)
+                first.State = EntityState.Unchanged;
             return ValueTask.FromResult(result);
         }
     }

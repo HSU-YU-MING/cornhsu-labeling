@@ -8,7 +8,8 @@ namespace Cornhsu.Labeling.Tests;
 /// UpdateAsync 被擋下時不能留下痕跡。lambda 改的是 DbContext 追蹤中的實體;驗證失敗若只拋例外,
 /// 那份修改會留在追蹤器裡,在下一次 SaveChanges(store 的任何寫入,或消費端自己存檔)落地。
 /// 所以每條都在失敗之後再做一次無關的寫入,然後從另一個 context 讀資料庫。
-/// 另外涵蓋循環檢查看不到的兩條路:經導覽屬性換父標籤,以及同一個 context 裡其他標籤未存的 ParentId。
+/// 另外涵蓋循環檢查看不到的兩條路:經導覽屬性換父標籤,以及同一個 context 裡其他標籤未存的 ParentId;
+/// 以及 2.0 起 lambda 只能改目標標籤本身(別的標籤只准經 Parent / Children 搬移)。
 /// </summary>
 public class UpdateFailureTests
 {
@@ -157,39 +158,134 @@ public class UpdateFailureTests
         stored.ParentId.Should().BeNull();
     }
 
-    // ---- lambda 經導覽屬性改了別的標籤的名稱:跟目標標籤一樣驗證,不能從這裡繞過 ----
+    // ---- lambda 只能改目標標籤本身;別的標籤只能經 Parent / Children 搬移(2.0,決策 D2 選項 B) ----
 
-    [Fact]
-    public async Task lambda經導覽屬性把父標籤的名稱改成空白_拋ArgumentException_資料庫不變()
+    [Theory]
+    [InlineData("Name")]
+    [InlineData("Color")]
+    [InlineData("Icon")]
+    [InlineData("SortOrder")]
+    public async Task lambda經導覽屬性改了別的標籤的欄位_拋InvalidOperationException_什麼都不存(string field)
     {
         using var db = new TestDb();
         var parent = await db.Store.CreateAsync("p");
         var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        var stamp = parent.ConcurrencyStamp;
 
-        var act = () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = "   ");
+        var act = () => db.Store.UpdateAsync(child.Id, l =>
+        {
+            l.Color = "#111111";   // 目標自己的修改也一起撤掉
+            switch (field)
+            {
+                case "Name": l.Parent!.Name = "q"; break;
+                case "Color": l.Parent!.Color = "#000000"; break;
+                case "Icon": l.Parent!.Icon = "star"; break;
+                default: l.Parent!.SortOrder = 5; break;
+            }
+        });
 
-        (await act.Should().ThrowAsync<ArgumentException>().WithMessage("label name must not be blank.*"))
-            .Which.ParamName.Should().Be("update");
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"update may only change the label being updated*but it changed {field} on label 'p' (Id: {parent.Id})*");
+        child.Color.Should().BeNull();
         parent.Name.Should().Be("p");
+        db.Context.ChangeTracker.HasChanges().Should().BeFalse();
         await db.Store.CreateAsync("x");
-        (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
+        var stored = await StoredAsync(db, parent.Id);
+        (stored.Name, stored.Color, stored.Icon, stored.SortOrder).Should().Be(("p", (string?)null, (string?)null, 0));
+        stored.ConcurrencyStamp.Should().Be(stamp);
+        (await StoredAsync(db, child.Id)).Color.Should().BeNull();
     }
 
     [Fact]
-    public async Task lambda經導覽屬性把父標籤改成超長或已被占用的名稱_照樣擋下()
+    public async Task lambda裡讓別的標籤接手或互換名稱_一律拒絕_改用各自的RenameAsync()
+    {
+        // 1.x 允許「目標讓出名字、父標籤接手」(第三輪審查 P7a)。2.0 起 lambda 不能改別的標籤
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("a", parentId: parent.Id);
+
+        var attempts = new Func<Task>[]
+        {
+            () => db.Store.UpdateAsync(child.Id, l => { l.Name = "tmp"; l.Parent!.Name = "a"; }),   // 接手
+            () => db.Store.UpdateAsync(child.Id, l => { l.Name = "p"; l.Parent!.Name = "a"; }),     // 互換
+            () => db.Store.UpdateAsync(child.Id, l => { l.Name = "新"; l.Parent!.Name = "新"; }),   // 搶同一個新名字
+        };
+        foreach (var act in attempts)
+            await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*but it changed Name on label 'p'*");
+        (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
+        (await StoredAsync(db, child.Id)).Name.Should().Be("a");
+
+        // 遷移寫法:各自呼叫
+        await db.Store.RenameAsync(child.Id, "tmp");
+        await db.Store.RenameAsync(parent.Id, "a");
+        (await StoredAsync(db, parent.Id)).Name.Should().Be("a");
+        (await StoredAsync(db, child.Id)).Name.Should().Be("tmp");
+    }
+
+    [Fact]
+    public async Task lambda經導覽屬性帶進新標籤_拋InvalidOperationException_新標籤不會插入()
     {
         using var db = new TestDb();
-        await db.Store.CreateAsync("占用");
         var parent = await db.Store.CreateAsync("p");
-        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        var child = await db.Store.CreateAsync("c");
+        Label Fresh(string name) => new() { Id = Guid.NewGuid(), Name = name, CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
+        var viaChildren = Fresh("stray");
+        var viaParent = Fresh("new parent");
 
-        var tooLong = () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = new string('長', Label.MaxNameLength + 1));
-        var taken = () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = "占用");
+        var addChild = () => db.Store.UpdateAsync(parent.Id, l => l.Children.Add(viaChildren));
+        var newParent = () => db.Store.UpdateAsync(child.Id, l => l.Parent = viaParent);
 
-        await tooLong.Should().ThrowAsync<ArgumentException>();
-        await taken.Should().ThrowAsync<InvalidOperationException>().WithMessage("label name '占用' is already taken.");
+        await addChild.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("update may only change the label being updated*but it added a new label 'stray'*CreateAsync*");
+        await newParent.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*but it added a new label 'new parent'*");
+        db.Context.Entry(viaChildren).State.Should().Be(EntityState.Detached);
+        db.Context.Entry(viaParent).State.Should().Be(EntityState.Detached);
+        parent.Children.Should().BeEmpty();
+        child.ParentId.Should().BeNull();
         await db.Store.CreateAsync("x");
-        (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
+        using var other = db.CreateSecondContext();
+        (await other.Set<Label>().AsNoTracking().Select(l => l.Name).ToListAsync())
+            .Should().BeEquivalentTo(new[] { "p", "c", "x" });
+    }
+
+    [Fact]
+    public async Task lambda自己載入別的標籤來改_或刪掉別的標籤_一樣拒絕()
+    {
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        var other = await db.Store.CreateAsync("o");
+        db.Context.ChangeTracker.Clear();   // 呼叫前 other 不在追蹤器裡
+
+        var edit = () => db.Store.UpdateAsync(target.Id, l =>
+            db.Context.Set<Label>().Single(x => x.Name == "o").Color = "#000000");
+        await edit.Should().ThrowAsync<InvalidOperationException>().WithMessage($"*but it changed Color on label 'o' (Id: {other.Id})*");
+
+        var loaded = await db.Context.Set<Label>().SingleAsync(x => x.Name == "o");
+        var delete = () => db.Store.UpdateAsync(target.Id, l => db.Context.Remove(loaded));
+        await delete.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"update may only change the label being updated*but it deleted label 'o' (Id: {other.Id})*DeleteAsync*");
+        db.Context.Entry(loaded).State.Should().Be(EntityState.Unchanged);
+
+        await db.Store.CreateAsync("x");
+        var stored = await StoredAsync(db, other.Id);
+        stored.Color.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task 呼叫前消費端自己改了別的標籤還沒存_不算lambda的修改_照常一起存檔()
+    {
+        // 判斷的是 lambda 前後的差異:消費端自己在呼叫前做的修改不受限制(照舊隨這次存檔送出)
+        using var db = new TestDb();
+        var a = await db.Store.CreateAsync("a");
+        var b = await db.Store.CreateAsync("b");
+        a.Color = "#123456";
+        a.Name = "a2";
+
+        await db.Store.UpdateAsync(b.Id, l => l.SortOrder = 1);
+
+        var stored = await StoredAsync(db, a.Id);
+        (stored.Name, stored.Color).Should().Be(("a2", "#123456"));
     }
 
     [Fact]
@@ -350,94 +446,41 @@ public class UpdateFailureTests
         parent.Color.Should().BeNull("偵測失敗也要照常還原其他修改");
     }
 
-    // ---- 同一次存檔裡讓出、接手名稱:占用檢查要看得到,v1.1.0 能成功的寫法不能開始拋例外 ----
-
     [Fact]
-    public async Task lambda裡目標讓出名字_父標籤接手_照常存檔()
+    public async Task 消費端已把某個標籤標成刪除還沒存_lambda改別的標籤被拒絕後_消費端的刪除原樣保留()
     {
-        using var db = new TestDb();
-        var parent = await db.Store.CreateAsync("p");
-        var child = await db.Store.CreateAsync("a", parentId: parent.Id);
-
-        await db.Store.UpdateAsync(child.Id, l =>
-        {
-            l.Name = "tmp";
-            l.Parent!.Name = "a";
-        });
-
-        (await StoredAsync(db, parent.Id)).Name.Should().Be("a");
-        (await StoredAsync(db, child.Id)).Name.Should().Be("tmp");
-    }
-
-    [Fact]
-    public async Task 消費端已把占用者標成刪除還沒存_lambda讓別的標籤接手那個名字_照常存檔()
-    {
-        // v1.1.0 能成功:刪除與改名在同一次存檔,EF 會先刪再改
+        // 1.x 允許 lambda 讓別的標籤接手被刪標籤的名字(第四輪審查 S09);2.0 起拒絕,還原時不能動到消費端自己的刪除
         using var db = new TestDb();
         var target = await db.Store.CreateAsync("t");
         var holder = await db.Store.CreateAsync("q");
         var other = await db.Store.CreateAsync("x", parentId: target.Id);
         db.Context.Remove(holder);   // 消費端自己的未存刪除
 
-        await db.Store.UpdateAsync(target.Id, l => l.Children.Single().Name = "q");
+        var act = () => db.Store.UpdateAsync(target.Id, l => l.Children.Single().Name = "q");
 
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*but it changed Name on label 'x'*");
+        other.Name.Should().Be("x");
+        db.Context.Entry(holder).State.Should().Be(EntityState.Deleted);
+        await db.Context.SaveChangesAsync();
         using var check = db.CreateSecondContext();
         (await check.Set<Label>().AsNoTracking().Select(l => l.Name).ToListAsync())
-            .Should().BeEquivalentTo(new[] { "t", "q" });
-        (await StoredAsync(db, other.Id)).Name.Should().Be("q");
+            .Should().BeEquivalentTo(new[] { "t", "x" });
     }
 
     [Fact]
-    public async Task lambda讓兩個標籤要用同一個新名字_照樣擋下_資料庫不變()
+    public async Task 目標自己的改名只看資料庫_名字被占用就擋下()
     {
+        // 占用者在同一個 context 裡改了名字、還沒存也一樣:目標的改名與 RenameAsync 同一套規則
         using var db = new TestDb();
-        var parent = await db.Store.CreateAsync("p");
-        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        var holder = await db.Store.CreateAsync("p");
+        var target = await db.Store.CreateAsync("c");
+        holder.Name = "p2";   // 消費端自己的未存改名
 
-        var act = () => db.Store.UpdateAsync(child.Id, l =>
-        {
-            l.Name = "新";
-            l.Parent!.Name = "新";
-        });
-
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("label name '新' is already taken.");
-        (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
-        (await StoredAsync(db, child.Id)).Name.Should().Be("c");
-    }
-
-    [Fact]
-    public async Task 不分大小寫的collation上_占用者只差大小寫且沒有改名_不算讓出_拋占用例外()
-    {
-        // 占用者「讓出」名字的前提是它這次存檔真的改了名稱;只差大小寫、沒有改名的占用者照樣算占用,
-        // 不能放行到資料庫才撞唯一索引
-        using var db = new CaseInsensitiveDb();
-        var parent = await db.Store.CreateAsync("p");
-        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
-        await db.Store.CreateAsync("Other");   // 追蹤中、沒有改名
-
-        var act = () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = "other");
-
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("label name 'other' is already taken.");
-        parent.Name.Should().Be("p");
-    }
-
-    [Fact]
-    public async Task 目標自己的改名照v1_1_0只看資料庫_兩個標籤互換名稱照樣擋下()
-    {
-        // 目標要用的名字資料庫裡有人占著,就算占用者在同一次存檔裡改掉也一樣擋(v1.1.0 的行為);
-        // 互換是個環,資料庫的唯一索引沒有辦法排出順序
-        using var db = new TestDb();
-        var parent = await db.Store.CreateAsync("p");
-        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
-
-        var act = () => db.Store.UpdateAsync(child.Id, l =>
-        {
-            l.Name = "p";
-            l.Parent!.Name = "c";
-        });
+        var act = () => db.Store.UpdateAsync(target.Id, l => l.Name = "p");
 
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("label name 'p' is already taken.");
-        (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
+        (await StoredAsync(db, target.Id)).Name.Should().Be("c");
+        holder.Name.Should().Be("p2");
     }
 
     /// <summary>繞過 store 直接改資料庫裡的名稱(舊資料、別的工具寫入的),然後清空 db.Context 的追蹤器。</summary>
@@ -606,7 +649,7 @@ public class UpdateFailureTests
             ("成功", () => db.Store.UpdateAsync(child.Id, l => l.Color = "#111111")),
             ("lambda 自己拋例外", () => db.Store.UpdateAsync(child.Id, l => { l.Color = "#222222"; throw new FormatException(); })),
             ("目標名稱驗證失敗", () => db.Store.UpdateAsync(child.Id, l => l.Name = "   ")),
-            ("其他標籤名稱驗證失敗", () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = "   ")),
+            ("改了別的標籤", () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = "   ")),
             ("同 Id 的另一個實例", () => db.Store.UpdateAsync(child.Id, l => l.Parent = clone)),
             ("存檔失敗", () => { failure.Armed = true; return db.Store.UpdateAsync(child.Id, l => l.SortOrder = 3); }),
             ("刪除存檔失敗", () => { failure.Armed = true; return db.Store.DeleteAsync(child.Id); }),
@@ -672,7 +715,7 @@ public class UpdateFailureTests
     }
 
     [Fact]
-    public async Task lambda經Children帶進新標籤後被擋下_那個新標籤不會在下一次存檔插入()
+    public async Task lambda經Children帶進新標籤又自己拋例外_那個新標籤不會在下一次存檔插入()
     {
         using var db = new TestDb();
         var parent = await db.Store.CreateAsync("p");
@@ -681,9 +724,9 @@ public class UpdateFailureTests
         var act = () => db.Store.UpdateAsync(parent.Id, l =>
         {
             l.Children.Add(fresh);
-            l.Name = "  ";
+            throw new FormatException("消費端自己的錯");
         });
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<FormatException>();
 
         db.Context.Entry(fresh).State.Should().Be(EntityState.Detached);
         parent.Children.Should().BeEmpty();
@@ -721,7 +764,8 @@ public class UpdateFailureTests
             l.Name = "  ";
         });
 
-        await act.Should().ThrowAsync<ArgumentException>("呼叫端要拿到的是驗證失敗,不是清理集合時的錯");
+        await act.Should().ThrowAsync<InvalidOperationException>("呼叫端要拿到的是驗證失敗,不是清理集合時的錯")
+            .WithMessage("*but it added a new label 'stray'*");
         parent.Name.Should().Be("p");
         db.Context.Entry(fresh).State.Should().Be(EntityState.Detached);
         children.Armed = false;

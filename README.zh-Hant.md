@@ -187,6 +187,10 @@ await store.DeleteAsync(review.Id);    // 各型別的連結由 cascade delete �
                                        // 還有子標籤時會拋例外
 ```
 
+`UpdateAsync` 只改你傳入的那個標籤。lambda 裡可以經 `Parent` 或 `Children` 搬移別的標籤;
+改別的標籤的欄位、帶進新標籤或刪掉別的標籤,會拋 `InvalidOperationException`、什麼都不存——
+請改對那個標籤呼叫 `UpdateAsync`、`RenameAsync`、`CreateAsync` 或 `DeleteAsync`。
+
 ## 不用 DI 容器
 
 把服務當單例持有的桌面 App(WPF、WinForms)或小型主控台工具,可以直接建立 store。

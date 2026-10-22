@@ -29,15 +29,14 @@
   context 只能丟掉(v1.1.0 + EF 10 一樣)。現在 store 在自己偵測之前就找出來,拋 `InvalidOperationException`
   (`the update put another Label instance with Id … into a navigation; use the instance this context already tracks.`),
   把那條連結剪掉再還原,context 照常可用。例外型別不變,訊息從 EF 的換成 store 的,所以算 minor。
-- **`UpdateAsync` 的 lambda 經導覽屬性改了別的標籤的名稱,也照名稱規則驗證**(**minor:例外型別改變**)。
-  以前只驗目標標籤,`UpdateAsync(c.Id, l => l.Parent!.Name = "   ")` 會把空白名稱寫進父標籤(v1.1.0 就有)。
-  現在 lambda 改了名稱的其他標籤、以及經導覽屬性帶進來的新標籤,都照目標標籤的規則去空白、檢查空白、長度與唯一性;
-  訊息與 `ParamName` 沿用既有的。lambda 只是載入進來讀的標籤不驗也不改寫(名稱不合現行規則的舊資料照樣留著);
-  占用檢查看得到同一次存檔,其他標籤接手目標讓出的名字(`l.Name = "tmp"; l.Parent!.Name = "a"`)、或接手你在同一次存檔裡
-  刪掉的標籤的名字,都照常成功(和 v1.1.0 一樣),
-  目標自己的改名維持只看資料庫。算 minor 的理由:v1.1.0 在資料庫才失敗的寫法(其他標籤改成已被占用、
-  超過欄寬的名稱,或兩個標籤搶同一個名字)以前拋 `DbUpdateException`,現在提早拋 `InvalidOperationException`
-  或 `ArgumentException`;有人接的是 `DbUpdateException` 的話要跟著改。
+- **`UpdateAsync` 的 lambda 只能改目標標籤本身;別的標籤只能經 `Parent`／`Children` 搬移**(**破壞性**)。
+  lambda 拿到的是追蹤中的實體,經導覽屬性碰得到別的標籤。以前改了什麼都照樣存檔:`l.Parent!.Name = "   "`
+  把空白名稱寫進父標籤、別的標籤被改了欄位卻不輪換並發戳記(兩邊同時改,後存的一方不會拿到並發例外)、
+  經導覽屬性帶進的新標籤沒有建立時間與戳記(主鍵已設的還會被當成既有的標籤下 UPDATE、影響 0 列而拋並發例外)。
+  現在 lambda 執行完先比對它前後的差異:改了別的標籤 `ParentId` 以外的欄位、帶進新標籤、刪掉別的標籤,
+  都拋 `InvalidOperationException`(`update may only change the label being updated (and move other labels through Parent or Children), but it …`),
+  並照既有機制還原,什麼都不存。改了別的標籤的 `Id` 也一樣擋下,訊息與改目標 `Id` 相同。
+  你在呼叫前自己做、還沒存的修改不受限制,照舊隨這次存檔送出;lambda 只是載入進來讀的標籤也不算修改。
 - **`QueryByLabelAsync`／`QueryByLabelsAsync` 對不上任何標籤時,回傳的也是 EF Core 查詢**(patch)。
   以前名稱都不存在、全是空白,或 `LabelMatch.All` 下缺任一名稱時,回傳的是記憶體裡的
   `Enumerable.Empty<T>().AsQueryable()`,接著呼叫 README 教的 `ToListAsync`／`CountAsync`／`AnyAsync`

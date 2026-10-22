@@ -91,15 +91,18 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var label = await _db.Set<Label>().FindAsync(new object[] { labelId }, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"label {labelId} not found.");
 
-        // lambda 改的是追蹤中的實體,還可能經導覽屬性動到別的標籤。先記下追蹤器裡每個標籤呼叫前的樣子,
-        // 驗證或存檔失敗時整批還原——否則被擋下的值會留在追蹤器,在下一次 SaveChanges 落地。
+        // lambda 改的是追蹤中的實體,還可能經導覽屬性碰到別的標籤。先記下追蹤器裡每個標籤呼叫前的樣子:
+        // 驗證或存檔失敗時整批還原(否則被擋下的值會留在追蹤器,在下一次 SaveChanges 落地),
+        // 也用來分辨哪些修改是 lambda 做的——別的標籤只准經 Parent / Children 搬移,見 EnsureOnlyTargetChangedAsync
         DetectLabelChanges();
         var snapshot = new TrackerSnapshot(_db);
-        var before = new Dictionary<Label, (Guid? ParentId, string Name)>(ReferenceEqualityComparer.Instance);
+        var before = new Dictionary<Label, LabelBefore>(ReferenceEqualityComparer.Instance);
         foreach (var entry in TrackedLabelEntries())
         {
             snapshot.CaptureDetected(entry);   // 上一行剛偵測過
-            before[entry.Entity] = (entry.Entity.ParentId, entry.Entity.Name);
+            before[entry.Entity] = new LabelBefore(
+                entry.State, entry.Entity.Id, entry.Entity.ParentId,
+                entry.State == EntityState.Unchanged ? null : entry.CurrentValues.Clone());   // Unchanged:呼叫前的值就是原值
         }
         snapshot.Own(label);
 
@@ -110,7 +113,8 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         {
             update(label);
 
-            if (label.Id != labelId)
+            // 主鍵一律不准改(目標的與別的標籤的都一樣);偵測變更碰到被改的主鍵只會拋 EF 自己的例外
+            if (label.Id != labelId || before.Any(pair => pair.Key.Id != pair.Value.Id))
                 throw new InvalidOperationException("a label's Id must not be changed inside UpdateAsync.");
 
             // 偵測變更之前先找「同 Id 的另一個實例」:讓 EF 偵測到它會撞身分衝突,而 EF Core 10 衝突的那一筆
@@ -120,27 +124,18 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                     $"the update put another Label instance with Id {conflict.Id} into a navigation; " +
                     "use the instance this context already tracks.");
 
-            // 導覽屬性(Parent、Children)的變更要等偵測變更才會寫回 ParentId;不先做,循環檢查看到的是舊值
+            // 導覽屬性(Parent、Children)的變更要等偵測變更才會寫回 ParentId;不先做,下面的檢查看到的是舊值
             DetectLabelChanges();
+
+            await EnsureOnlyTargetChangedAsync(label, before, ct).ConfigureAwait(false);
 
             // 改名走與 RenameAsync 相同的規則(正規化 + 唯一性)
             if (!string.Equals(label.Name, storedName, StringComparison.Ordinal))
                 await NormalizeNameForSaveAsync(label, nameof(update), ct).ConfigureAwait(false);
 
-            // lambda 經導覽屬性改了名稱、或帶進來的其他標籤,同一次存檔會一起寫出去:一樣驗,不能從這裡繞過
-            var trackedEntries = TrackedLabelEntries();
-            var tracked = trackedEntries.Select(e => e.Entity).ToList();
-            var renamedOthers = trackedEntries
-                .Where(e => !ReferenceEquals(e.Entity, label)
-                    && !(before.TryGetValue(e.Entity, out var was)
-                        ? string.Equals(e.Entity.Name, was.Name, StringComparison.Ordinal)   // lambda 沒改它的名稱
-                        : e.State == EntityState.Unchanged))                                 // lambda 只是載入(讀)進來的既有標籤
+            // 要檢查循環的:這個標籤本身(有父標籤時),以及 lambda 換了父標籤的每一個標籤
+            var moved = TrackedLabelEntries()
                 .Select(e => e.Entity)
-                .ToList();   // 沒改的不驗也不改寫:舊資料的名稱可能本來就不合現行規則,沒有人要寫它
-            await ValidateOtherNamesAsync(label, renamedOthers, tracked, nameof(update), ct).ConfigureAwait(false);
-
-            // 要檢查的:這個標籤本身(有父標籤時),以及 lambda 換了父標籤的每一個標籤
-            var moved = tracked
                 .Where(l => ReferenceEquals(l, label)
                     || !before.TryGetValue(l, out var was)
                     || was.ParentId != l.ParentId)
@@ -149,8 +144,6 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
             label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
             _db.Entry(label).DetectChanges();          // 新戳記與正規化後的名稱:存檔前的記帳(ArmForSave)要看到目標已是待存
-            if (!_db.ChangeTracker.AutoDetectChangesEnabled)
-                DetectLabelChanges();                  // 消費端關掉自動偵測時,SaveChanges 不會自己發現其他標籤正規化後的名稱
             snapshot.ArmForSave();
             await _db.SaveChangesAsync(ct).ConfigureAwait(false);
             return label;
@@ -645,61 +638,51 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         label.Name = normalized;
     }
 
+    /// <summary>UpdateAsync 呼叫 lambda 之前,追蹤器裡一個標籤的樣子。<see cref="Values"/> 為 null 表示當時是 Unchanged(呼叫前的值就是原值)。</summary>
+    private sealed record LabelBefore(EntityState State, Guid Id, Guid? ParentId, PropertyValues? Values);
+
     /// <summary>
-    /// 驗證 UpdateAsync 的 lambda 經導覽屬性改了名稱(或帶進來)的其他標籤,規則同 <see cref="RenameAsync"/>,
-    /// 但占用檢查看得到同一次存檔:兩個標籤要用同一個名字算占用;資料庫裡的占用者若在這次存檔裡改用別的名字、
-    /// 或被刪掉(讓出),不算占用——「目標改成 tmp、父標籤接手目標原本的名字」、「消費端刪掉 q、別的標籤改名成 q」
-    /// 這些寫法在 v1.1.0 能成功,不能因為逐筆查資料庫而開始失敗。
-    /// 目標標籤自己的改名維持 v1.1.0 的規則(只看資料庫),所以有目標參與的互換名稱照舊擋在目標那一步;
-    /// 只有其他標籤彼此互換(資料庫排不出順序的環)時,兩邊都算讓出、放行到資料庫,由唯一索引擋下、拋 DbUpdateException 並還原
-    /// ——和 v1.1.0 一樣是在資料庫才失敗。
+    /// UpdateAsync 的 lambda 只能改目標標籤本身;別的標籤只准經 Parent / Children 搬移,也就是只改 ParentId。
+    /// 改了別的標籤的其他欄位、帶進新標籤、刪掉別的標籤,一律拋例外(2.0 起;1.x 會照樣存檔,
+    /// 那些標籤的並發戳記不輪換、新標籤也沒有建立時間與戳記)。比的是 lambda 前後的差異:
+    /// 消費端自己在呼叫前做、還沒存的修改不算,照舊隨這次存檔送出。lambda 只是載入進來讀的標籤也不算。
     /// </summary>
-    private async Task ValidateOtherNamesAsync(
-        Label target, IReadOnlyList<Label> others, IReadOnlyList<Label> tracked, string paramName, CancellationToken ct)
+    private async Task EnsureOnlyTargetChangedAsync(Label target, IReadOnlyDictionary<Label, LabelBefore> before, CancellationToken ct)
     {
-        if (others.Count == 0) return;
-
-        var normalized = new List<(Label Label, string Name)>(others.Count);
-        foreach (var other in others)
+        const string rule = "update may only change the label being updated (and move other labels through Parent or Children)";
+        foreach (var entry in TrackedLabelEntries())
         {
-            var name = Normalize(other.Name)
-                ?? throw new ArgumentException("label name must not be blank.", paramName);
-            ValidateNameLength(name);
-            normalized.Add((other, name));
+            var other = entry.Entity;
+            if (ReferenceEquals(other, target)) continue;
+            before.TryGetValue(other, out var was);
+            var storedName = was?.Values?[nameof(Label.Name)] as string ?? entry.Property(l => l.Name).OriginalValue;
+
+            // 新標籤:主鍵沒設的會是 Added;主鍵已設的,EF 從導覽屬性發現時當成既有的實體、標成 Modified,
+            // 要問資料庫才分得出來(只在這次呼叫之前沒追蹤、又被改過的標籤上問,也就是一定要拋例外的時候)
+            var isNew = was is null
+                && (entry.State == EntityState.Added
+                    || (entry.State == EntityState.Modified
+                        && !await _db.Set<Label>().AsNoTracking().AnyAsync(l => l.Id == other.Id, ct).ConfigureAwait(false)));
+            if (isNew || (entry.State == EntityState.Added && was?.State != EntityState.Added))
+                throw new InvalidOperationException(
+                    $"{rule}, but it added a new label '{other.Name}'. Create labels with CreateAsync instead.");
+            if (entry.State == EntityState.Deleted && was?.State != EntityState.Deleted)
+                throw new InvalidOperationException(
+                    $"{rule}, but it deleted label '{storedName}' (Id: {other.Id}). Use DeleteAsync instead.");
+            if (entry.State is not (EntityState.Modified or EntityState.Added)) continue;
+
+            var changed = entry.Properties
+                .Where(p => p.Metadata.Name != nameof(Label.ParentId)
+                    && (was?.Values is { } values
+                        ? !p.Metadata.GetValueComparer().Equals(p.CurrentValue, values[p.Metadata])   // 呼叫前就有未存的修改:跟當時的值比
+                        : p.IsModified))                                                              // 呼叫前是 Unchanged 或還沒追蹤:跟原值比
+                .Select(p => p.Metadata.Name)
+                .ToList();
+            if (changed.Count > 0)
+                throw new InvalidOperationException(
+                    $"{rule}, but it changed {string.Join(", ", changed)} on label '{storedName}' (Id: {other.Id}). " +
+                    "Call UpdateAsync on that label instead.");
         }
-
-        var finalName = new Dictionary<Label, string>(ReferenceEqualityComparer.Instance) { [target] = target.Name };
-        foreach (var (other, name) in normalized)
-            finalName[other] = name;
-
-        var claimed = new Dictionary<string, Label>(StringComparer.Ordinal) { [target.Name] = target };
-        foreach (var (other, name) in normalized)
-        {
-            if (claimed.TryGetValue(name, out var claimant) && !ReferenceEquals(claimant, other))
-                throw new InvalidOperationException($"label name '{name}' is already taken.");
-            claimed[name] = other;
-
-            var id = other.Id;
-            var holders = await _db.Set<Label>().AsNoTracking()
-                .Where(l => l.Name == name && l.Id != id)
-                .Select(l => l.Id)
-                .ToListAsync(ct).ConfigureAwait(false);
-            foreach (var holderId in holders)
-            {
-                var holder = tracked.FirstOrDefault(l => l.Id == holderId);
-                var holderEntry = holder is null ? null : _db.Entry(holder);
-                // 讓出:占用者在同一次存檔裡被刪掉(消費端自己標成刪除的),或名稱真的改成別的
-                var givesUp = holderEntry is not null
-                    && (holderEntry.State == EntityState.Deleted
-                        || (holderEntry.Property(l => l.Name).IsModified
-                            && !string.Equals(finalName.TryGetValue(holder!, out var next) ? next : holder!.Name, name, StringComparison.Ordinal)));
-                if (!givesUp)
-                    throw new InvalidOperationException($"label name '{name}' is already taken.");
-            }
-        }
-
-        foreach (var (other, name) in normalized)
-            other.Name = name;
     }
 
     /// <summary>建立與改名時主動驗證名稱長度(SQLite 不強制 HasMaxLength,不能只靠資料庫)。</summary>

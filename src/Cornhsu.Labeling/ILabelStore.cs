@@ -33,6 +33,9 @@ public interface ILabelStore
     /// rules as <see cref="RenameAsync"/>). Changes made to the Label inside <paramref name="update"/>
     /// are persisted; changing the parent — through <see cref="Label.ParentId"/> or through the
     /// <see cref="Label.Parent"/> / <see cref="Label.Children"/> navigations — is checked for cycles.
+    /// The update may change only this label, apart from moving other labels through those navigations:
+    /// changing any other field of another label, adding a label or deleting one throws
+    /// <see cref="InvalidOperationException"/>.
     /// If the update is rejected or cannot be saved, the changes made inside <paramref name="update"/>
     /// are rolled back, so a later save of the same context does not persist them.
     /// </summary>

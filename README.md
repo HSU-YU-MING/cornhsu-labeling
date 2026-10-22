@@ -196,6 +196,11 @@ await store.DeleteAsync(review.Id);    // links on every type are removed by cas
                                        // throws while the label still has children
 ```
 
+`UpdateAsync` changes only the label you pass it. Inside the lambda you may also move other labels
+(through `Parent` or `Children`); changing another label's fields, adding a label or deleting one
+throws `InvalidOperationException` and saves nothing — call `UpdateAsync`, `RenameAsync`,
+`CreateAsync` or `DeleteAsync` for that label instead.
+
 ## Without a DI container
 
 Desktop apps that hold their services as singletons (WPF, WinForms) or small console tools can build

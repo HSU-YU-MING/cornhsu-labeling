@@ -356,8 +356,9 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 清單畫面請用 `GetLabelsOfManyAsync`,不要在迴圈裡呼叫 `GetLabelsOfAsync`
 (本機 SQLite 差 5 倍;有網路延遲的資料庫差的是 49 次 roundtrip)。
 
-以名稱查詢的 API 每個名稱各自下一次小查詢(含子孫時再讀一次階層),比對規則交給資料庫的 collation。
-1.1.0 是一次撈出全部標籤、在記憶體比對名稱;benchmark 上兩者的差異在量測雜訊之內。
+以名稱查詢的 API 把全部名稱放進一條查詢(每個名稱一段 `UNION ALL`,一條最多 100 個名稱),含子孫時再讀一次階層,
+比對規則交給資料庫的 collation。1.1.0 是一次撈出全部標籤、在記憶體比對名稱;benchmark 上兩者的差異在量測雜訊之內,
+LocalDB 上 50 個、100 個名稱分別約 7 ms、9 ms,與 1.1.0 相當。
 
 `UpdateAsync` 每次呼叫會把 DbContext 追蹤中的所有項目看過兩遍:lambda 執行前一遍(開著自動偵測時先整個偵測一次,
 再記下每一項的狀態),更新被擋下或存檔失敗時才還原得回去;lambda 執行後一遍,才分得出 lambda 改了什麼,

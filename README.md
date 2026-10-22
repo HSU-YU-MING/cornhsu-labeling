@@ -383,10 +383,11 @@ at this scale, so the package does not merge them. For list views use `GetLabels
 than calling `GetLabelsOfAsync` in a loop — it is 5× faster on local SQLite, and on a database
 with network latency the difference is 49 round trips.
 
-The name-based queries resolve each name with a small query of its own (plus one read of the
-hierarchy when descendants are included), so the database's collation decides what matches. Against
-1.1.0, which read every label in one query and matched names in memory, the benchmark shows no
-difference beyond noise.
+The name-based queries match all the names in one query (a `UNION ALL` with one branch per name,
+up to 100 names per query), plus one read of the hierarchy when descendants are included, so the
+database's collation decides what matches. Against 1.1.0, which read every label in one query and
+matched names in memory, the benchmark shows no difference beyond noise, and 50 or 100 names on
+LocalDB take about 7 and 9 ms, as in 1.1.0.
 
 `UpdateAsync` looks at everything the DbContext is tracking, twice per call: once before your lambda
 runs (a full change detection, when it is on, plus a note of each entry's state), so it can roll the

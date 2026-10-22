@@ -201,4 +201,47 @@ public class MultiLabelQueryTests
         var actQuery = () => db.Store.QueryByLabelsAsync<TestNote>(null!);
         await actQuery.Should().ThrowAsync<ArgumentNullException>();
     }
+
+    /// <summary>數送出的 SQL 指令。</summary>
+    private sealed class CommandCounter : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public int Count;
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref Count);
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task 名稱很多時_名稱解析一次查回_往返次數不隨名稱數增加(bool includeDescendants)
+    {
+        // 名稱交給資料庫比對,但不是一個名稱一次往返:全部名稱以 UNION ALL 一次查回(每列帶名稱的序號),
+        // 含子孫時再讀一次階層,之後每個註冊型別一次
+        var counter = new CommandCounter();
+        using var db = new TestDb(null, counter);
+        var notes = new List<TestNote>();
+        for (var i = 0; i < 50; i++)
+            notes.Add(await db.AddNoteAsync($"n{i:D2}"));
+        for (var i = 0; i < 50; i++)
+            await db.Store.AttachAsync(notes[i], $"label{i:D2}");
+        var names = Enumerable.Range(0, 50).Select(i => $"label{i:D2}").Append("missing").ToList();
+
+        counter.Count = 0;
+        var hits = await db.Store.FindByLabelsAsync(names, LabelMatch.Any, includeDescendants);
+
+        hits.Should().HaveCount(50);
+        counter.Count.Should().Be((includeDescendants ? 2 : 1) + 2, "名稱一次、階層一次(含子孫時)、兩個註冊型別各一次");
+
+        (await db.Store.FindByLabelsAsync(new[] { "label00", "missing" }, LabelMatch.All, includeDescendants))
+            .Should().BeEmpty("All 下缺一個名稱就是空的");
+        (await db.Store.FindByLabelsAsync(new[] { "label01", "label00" }, LabelMatch.Any, includeDescendants))
+            .Select(h => h.DisplayName).Should().BeEquivalentTo(new[] { "n00", "n01" });
+    }
 }

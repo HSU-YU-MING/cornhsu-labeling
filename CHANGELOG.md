@@ -183,8 +183,9 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   `AttachAsync(note, "Paper")` 沿用了既有的 `paper` 標籤、`FindAsync("Paper")` 也找得到它,
   `FindByLabelAsync("Paper")` 卻靜默地回傳 0 筆,`LabelMatch.All` 下只要一個名稱大小寫不同整個結果就是空的。
   現在每個名稱交給資料庫比對,`FindAsync` 找得到的標籤,這四支就查得到;子孫照舊沿階層展開。
-  README Limitations 的例外段與 XML 的 `<remarks>` 已移除。查詢改成每個名稱一次查詢(含子孫時再讀一次階層),
-  不再一次撈出全部標籤的名稱;`samples/Benchmark` 前後量測的差異在雜訊範圍內。
+  README Limitations 的例外段與 XML 的 `<remarks>` 已移除。全部名稱以一條 `UNION ALL` 查詢比對(每個名稱一段、
+  帶著它的序號,一條最多 100 個名稱),含子孫時再讀一次階層,不再一次撈出全部標籤的名稱;
+  往返次數不隨名稱數增加(LocalDB 上 50 個、100 個名稱約 7、9 ms,與 1.1.0 相當),`samples/Benchmark` 前後量測的差異在雜訊範圍內。
 - **`UpdateAsync` 的 lambda 只能改目標標籤本身;別的標籤只能經 `Parent`／`Children` 搬移**(破壞性,遷移見上方 2)。
   lambda 拿到的是追蹤中的實體,經導覽屬性碰得到別的標籤。以前改了什麼都照樣存檔:`l.Parent!.Name = "   "`
   把空白名稱寫進父標籤、別的標籤被改了欄位卻不輪換並發戳記(兩邊同時改,後存的一方不會拿到並發例外)、

@@ -591,25 +591,39 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var names = NormalizeMany(labelNames);
         if (names.Count == 0) return null;
 
-        // 名稱逐一交給資料庫比對,跟 FindAsync、貼標、撕標一樣依 collation 走。不能一次 WHERE Name IN (...)
+        // 名稱交給資料庫比對,跟 FindAsync、貼標、撕標一樣依 collation 走。不能一次 WHERE Name IN (...)
         // 撈回來再在記憶體對回輸入的名稱:記憶體不知道資料庫的 collation,對不回去。
-        // 名稱有唯一索引(依同一個 collation),每個名稱至多一筆
-        var roots = new List<Guid>(names.Count);
-        foreach (var name in names)
+        // 所以每個名稱一段「SELECT 序號, Id WHERE Name = @名稱」,以 Concat(UNION ALL)接成一條查詢,
+        // 回來的每一列帶著它對上的是第幾個輸入名稱;一個名稱對上幾列就是幾個標籤(唯一索引下通常至多一個)
+        var matched = new List<Guid>?[names.Count];
+        foreach (var chunk in Enumerable.Range(0, names.Count).Chunk(MaxNamesPerQuery))
         {
-            var rootId = await _db.Set<Label>()
-                .Where(l => l.Name == name)
-                .Select(l => (Guid?)l.Id)
-                .FirstOrDefaultAsync(ct).ConfigureAwait(false);
-            if (rootId is { } id)
-                roots.Add(id);
+            IQueryable<NameHit>? query = null;
+            foreach (var index in chunk)
+            {
+                var name = names[index];
+                var position = index;
+                var part = _db.Set<Label>()
+                    .Where(l => l.Name == name)
+                    .Select(l => new NameHit { Position = EF.Constant(position), Id = l.Id });
+                query = query is null ? part : query.Concat(part);
+            }
+            foreach (var hit in await query!.ToListAsync(ct).ConfigureAwait(false))
+                (matched[hit.Position] ??= new List<Guid>()).Add(hit.Id);
+        }
+
+        var roots = new List<List<Guid>>(names.Count);
+        foreach (var ids in matched)
+        {
+            if (ids is not null)
+                roots.Add(ids);
             else if (match == LabelMatch.All)
                 return null;   // 缺一個名稱 → AND 不可能滿足;OR 則略過不存在的名稱
         }
         if (roots.Count == 0) return null;
 
         if (!includeDescendants)
-            return roots.Select(id => (IReadOnlyCollection<Guid>)new[] { id }).ToList();
+            return roots.Select(ids => (IReadOnlyCollection<Guid>)ids).ToList();
 
         // 子孫在記憶體沿 (Id, ParentId) 展開:標籤數量通常很小,各 provider 也沒有共通的遞迴查詢寫法
         var edges = await _db.Set<Label>()
@@ -619,12 +633,11 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var byParent = edges.ToLookup(e => e.ParentId, e => e.Id);
 
         var groups = new List<IReadOnlyCollection<Guid>>(roots.Count);
-        foreach (var rootId in roots)
+        foreach (var rootIds in roots)
         {
             var group = new List<Guid>();
             var seen = new HashSet<Guid>();
-            var queue = new Queue<Guid>();
-            queue.Enqueue(rootId);
+            var queue = new Queue<Guid>(rootIds);
             while (queue.Count > 0)
             {
                 var id = queue.Dequeue();
@@ -637,6 +650,19 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         }
 
         return groups;
+    }
+
+    /// <summary>
+    /// 一次名稱解析查詢最多帶幾個名稱(UNION ALL 的段數)。SQLite 一條複合 SELECT 預設最多 500 段,
+    /// 每個名稱也是一個參數;100 對所有 provider 都安全,一百個以內的名稱就是一次往返。
+    /// </summary>
+    private const int MaxNamesPerQuery = 100;
+
+    /// <summary>名稱解析查詢的一列:第幾個輸入名稱、對上的標籤。</summary>
+    private sealed class NameHit
+    {
+        public int Position { get; init; }
+        public Guid Id { get; init; }
     }
 
     /// <summary>

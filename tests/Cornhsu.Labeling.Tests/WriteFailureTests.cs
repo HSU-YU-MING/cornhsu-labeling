@@ -597,12 +597,15 @@ public class WriteFailureTests
 
         using (new System.Transactions.TransactionScope(System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
         {
+            // 整段只用一條連線:不然查詢與存檔各開一條,交易會升級成分散式交易(需要 MSDTC)
+            await db.Context.Database.OpenConnectionAsync();
             after.Armed = true;
             var act = () => db.Store.DeleteAsync(label.Id);
             (await act.Should().ThrowAsync<InvalidOperationException>()).Which.Should().BeSameAs(after.Thrown, "要是攔截器在提交後拋的那個");
 
             // 判斷「已提交」時看到外層還有交易:消費端可能不 Complete,store 不能假設刪除已經生效
             db.Context.Entry(label).State.Should().Be(EntityState.Unchanged);
+            await db.Context.Database.CloseConnectionAsync();
         }
     }
 

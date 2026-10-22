@@ -99,7 +99,7 @@
 
 ### Changed
 - **`UpdateAsync` 每次呼叫多了掃過追蹤中標籤的成本**(行為不變)。還原與循環檢查要求在 lambda 前後各看一遍
-  追蹤中的標籤;追蹤 1,000 個標籤、另加 10,000 個其他實體時,每次呼叫約 5–7 ms(1.1.0 約 2.5 ms)。
+  追蹤中的標籤;追蹤 1,000 個標籤、另加 10,000 個其他實體時,每次呼叫約 4–6 ms(1.1.0 約 2.5 ms)。
   內部列舉時暫時關掉自動偵測、只偵測標籤,不再每次都掃整個 context(修正前同樣的量測是 17–20 ms);
   README Performance 寫了這件事。
 - **`ILabelStore.AttachManyAsync` 的 XML 註解更正**(patch,只改文件)。以前寫 "everything is saved in a single

@@ -348,7 +348,7 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 
 `UpdateAsync` 每次呼叫會把 DbContext 追蹤中的標籤看過兩遍:lambda 執行前一遍,更新被擋下或存檔失敗時才還原得回去;
 lambda 執行後一遍,經 `Parent` 或 `Children` 導覽屬性換的父標籤才檢查得到循環。追蹤 1,000 個標籤
-(另加 10,000 個其他實體)時,每次呼叫約 5–7 ms,1.1.0 約 2.5 ms。追蹤的標籤不多的 context
+(另加 10,000 個其他實體)時,每次呼叫約 4–6 ms,1.1.0 約 2.5 ms。追蹤的標籤不多的 context
 (例如讀標籤清單時用 `AsNoTracking()`)感覺不到差別。
 
 ## 限制

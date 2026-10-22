@@ -161,3 +161,67 @@ public sealed class TestDb : IDisposable
         _conn?.Dispose();
     }
 }
+
+/// <summary>
+/// 自訂模型的 DbContext 用的資料庫(soft-delete、影子外鍵這類 TestDbContext 沒有的形狀)。
+/// 跟 <see cref="TestDb"/> 一樣吃 CORNHSU_TEST_PROVIDER:每個實例一個獨立資料庫,結束時刪掉。
+/// </summary>
+public sealed class CustomDb<TContext> : IDisposable where TContext : DbContext
+{
+    private static readonly string Provider =
+        Environment.GetEnvironmentVariable("CORNHSU_TEST_PROVIDER")?.ToLowerInvariant() ?? "sqlite";
+
+    private readonly SqliteConnection? _conn;
+    private readonly Func<DbContextOptions<TContext>, LabelRegistry, TContext> _factory;
+
+    public DbContextOptions<TContext> Options { get; }
+    public LabelRegistry Registry { get; }
+    public TContext Context { get; }
+    public ILabelStore Store { get; }
+
+    public CustomDb(LabelRegistry registry, Func<DbContextOptions<TContext>, LabelRegistry, TContext> factory,
+        params IInterceptor[] interceptors)
+    {
+        var builder = new DbContextOptionsBuilder<TContext>().EnableServiceProviderCaching(false).AddInterceptors(interceptors);
+        switch (Provider)
+        {
+            case "sqlserver":
+            {
+                var server = Environment.GetEnvironmentVariable("CORNHSU_TEST_SQLSERVER")
+                    ?? @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true;TrustServerCertificate=true";
+                builder.UseSqlServer($"{server};Database=cornhsu_test_{Guid.NewGuid():N}");
+                break;
+            }
+            case "postgres":
+            {
+                var server = Environment.GetEnvironmentVariable("CORNHSU_TEST_POSTGRES")
+                    ?? "Host=localhost;Username=postgres;Password=postgres";
+                builder.UseNpgsql($"{server};Database=cornhsu_test_{Guid.NewGuid():N}");
+                break;
+            }
+            default:
+                _conn = new SqliteConnection("DataSource=:memory:");
+                _conn.Open();
+                builder.UseSqlite(_conn);
+                break;
+        }
+
+        Options = builder.Options;
+        Registry = registry;
+        _factory = factory;
+        Context = factory(Options, registry);
+        Context.Database.EnsureCreated();
+        Store = LabelStoreFactory.Create(Context, registry);
+    }
+
+    /// <summary>同一個資料庫上的另一個 context。呼叫端負責 Dispose。</summary>
+    public TContext CreateSecondContext() => _factory(Options, Registry);
+
+    public void Dispose()
+    {
+        if (Provider != "sqlite")
+            Context.Database.EnsureDeleted();
+        Context.Dispose();
+        _conn?.Dispose();
+    }
+}

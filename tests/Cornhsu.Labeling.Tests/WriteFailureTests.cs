@@ -544,6 +544,86 @@ public class WriteFailureTests
         (await StoredLinkCountAsync(db)).Should().Be(0);
     }
 
+    // ---- 「已提交」只能從 EF 接受之後的狀態判斷:SavingChanges 攔截器改了狀態、資料庫才失敗,不算 ----
+
+    /// <summary>另一個 context 先插入一筆 note,回傳它的 Id:db.Context 再 Add 同 Id 的 note 會在資料庫撞主鍵。</summary>
+    private static async Task<Guid> InsertNoteElsewhereAsync(Func<DbContext> second)
+    {
+        using var other = second();
+        var id = Guid.NewGuid();
+        other.Add(new TestNote { Id = id, Title = "別處" });
+        await other.SaveChangesAsync();
+        return id;
+    }
+
+    [Fact]
+    public async Task softDelete攔截器把刪除改成修改後資料庫失敗_DeleteAsync要還原_不能當成已提交()
+    {
+        using var db = new CustomDb<SoftDeleteDbContext>(
+            new LabelRegistry().Labelable<TestNote>(), (o, r) => new SoftDeleteDbContext(o, r), new SoftDelete());
+        var label = await db.Store.CreateAsync("x");
+        var dup = new TestNote { Id = await InsertNoteElsewhereAsync(db.CreateSecondContext), Title = "撞主鍵" };
+        db.Context.Add(dup);   // 消費端自己的未存修改:存檔時在資料庫撞主鍵
+
+        var act = () => db.Store.DeleteAsync(label.Id);
+        await act.Should().ThrowAsync<DbUpdateException>();
+
+        db.Context.Entry(label).State.Should().Be(EntityState.Unchanged, "資料庫拒絕了,刪除要撤回");
+        db.Context.Entry(dup).State = EntityState.Detached;   // 消費端修好自己的錯,再存一次
+        await db.Context.SaveChangesAsync();
+        using var check = db.CreateSecondContext();
+        (await check.Set<Label>().Where(l => l.Id == label.Id).Select(l => EF.Property<bool>(l, "IsDeleted")).SingleAsync())
+            .Should().BeFalse("拋了例外的 DeleteAsync 不能在消費端下一次存檔時落地");
+    }
+
+    [Fact]
+    public async Task 攔截器把部分待存項目改回Unchanged後資料庫失敗_只要還有沒被接受的就照常還原()
+    {
+        using var db = new TestDb(null, new KeepLinks());
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "論文");   // 連結留在追蹤器:刪標籤時 EF 會把它 cascade 成刪除
+        var label = (await db.Store.FindAsync("論文"))!;
+        var dup = new TestNote { Id = await InsertNoteElsewhereAsync(db.CreateSecondContext), Title = "撞主鍵" };
+        db.Context.Add(dup);
+
+        var act = () => db.Store.DeleteAsync(label.Id);
+        await act.Should().ThrowAsync<DbUpdateException>();
+
+        db.Context.Entry(label).State.Should().Be(EntityState.Unchanged, "標籤還在待刪狀態,這次存檔沒有被接受");
+        db.Context.Entry(dup).State = EntityState.Detached;
+        await db.Context.SaveChangesAsync();
+        (await StoredLabelsAsync(db)).Should().ContainSingle();
+    }
+
+    /// <summary>消費端規則:連結不准經 cascade 刪掉,存檔前把被標成刪除的連結改回 Unchanged。</summary>
+    private sealed class KeepLinks : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            foreach (var entry in eventData.Context!.ChangeTracker.Entries<LabelLink<TestNote, Guid>>()
+                         .Where(e => e.State == EntityState.Deleted).ToList())
+                entry.State = EntityState.Unchanged;
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    /// <summary>全域 soft-delete 慣例:有 IsDeleted 影子屬性、被標成刪除的項目改成修改 + IsDeleted = true。</summary>
+    private sealed class SoftDelete : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            foreach (var entry in eventData.Context!.ChangeTracker.Entries().Where(e => e.State == EntityState.Deleted).ToList())
+            {
+                if (entry.Metadata.FindProperty("IsDeleted") is null) continue;
+                entry.State = EntityState.Modified;
+                entry.Property("IsDeleted").CurrentValue = true;
+            }
+            return ValueTask.FromResult(result);
+        }
+    }
+
     /// <summary>存檔提交之後才拋例外(只拋一次),模擬消費端的 SavedChanges 攔截器(稽核、outbox)出錯。</summary>
     private sealed class ThrowAfterSave : SaveChangesInterceptor
     {
@@ -627,6 +707,23 @@ public class Classified
     public Guid Id { get; set; }
     public Guid? CategoryId { get; set; }
     public Label? Category { get; set; }
+}
+
+/// <summary>標籤多一個 IsDeleted 影子屬性(soft-delete 慣例)的 DbContext。</summary>
+public class SoftDeleteDbContext : DbContext
+{
+    private readonly LabelRegistry _registry;
+
+    public SoftDeleteDbContext(DbContextOptions<SoftDeleteDbContext> options, LabelRegistry registry)
+        : base(options) => _registry = registry;
+
+    public DbSet<TestNote> Notes => Set<TestNote>();
+
+    protected override void OnModelCreating(ModelBuilder b)
+    {
+        b.ApplyLabelModel(_registry);
+        b.Entity<Label>().Property<bool>("IsDeleted");
+    }
 }
 
 /// <summary>以必填外鍵參照標籤、刪標籤時 cascade 刪除的實體。</summary>

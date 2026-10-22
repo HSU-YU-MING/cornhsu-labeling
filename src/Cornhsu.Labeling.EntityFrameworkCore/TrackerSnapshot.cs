@@ -74,9 +74,12 @@ internal sealed class TrackerSnapshot
     /// 這次存檔是否已被資料庫接受。EF 提交之後會先把寫出去的項目標成 Unchanged(刪除的則 detach),
     /// 才跑 SavedChanges 攔截器之類的後續步驟——在那裡拋的例外不代表沒寫進去,這時還原只會把追蹤器弄得和資料庫不一致
     /// (把已刪掉的放回去、把已提交的值改回舊值)。
+    /// 判斷看的是「每一個都變成 Unchanged 或 detached」,不是「狀態變了」:SavingChanges 攔截器可能在送出前改狀態
+    /// (例如 soft-delete 把刪除改成修改),之後資料庫才失敗,那不算接受。
     /// </summary>
     public bool SaveAccepted
-        => _pending is { Count: > 0 } && _pending.All(p => p.Entry.State != p.State);
+        => _pending is { Count: > 0 }
+           && _pending.All(p => p.Entry.State is EntityState.Unchanged or EntityState.Detached);
 
     /// <summary>
     /// 把記下的項目裡被改掉的主鍵直接寫回 CLR 屬性。lambda 在偵測變更之前改了主鍵的話,EF 還不知道,

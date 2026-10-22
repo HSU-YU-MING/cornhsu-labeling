@@ -228,6 +228,22 @@ public class UpdateFailureTests
     }
 
     [Fact]
+    public async Task 不分大小寫的collation上_占用者只差大小寫且沒有改名_不算讓出_拋占用例外()
+    {
+        // 占用者「讓出」名字的前提是它這次存檔真的改了名稱;只差大小寫、沒有改名的占用者照樣算占用,
+        // 不能放行到資料庫才撞唯一索引
+        using var db = new CaseInsensitiveDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        await db.Store.CreateAsync("Other");   // 追蹤中、沒有改名
+
+        var act = () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = "other");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("label name 'other' is already taken.");
+        parent.Name.Should().Be("p");
+    }
+
+    [Fact]
     public async Task 目標自己的改名照v1_1_0只看資料庫_兩個標籤互換名稱照樣擋下()
     {
         // 目標要用的名字資料庫裡有人占著,就算占用者在同一次存檔裡改掉也一樣擋(v1.1.0 的行為);

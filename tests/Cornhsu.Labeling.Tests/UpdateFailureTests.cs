@@ -190,6 +190,57 @@ public class UpdateFailureTests
         (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
     }
 
+    /// <summary>繞過 store 直接改資料庫裡的名稱(舊資料、別的工具寫入的),然後清空 db.Context 的追蹤器。</summary>
+    private static async Task WriteLegacyNameAsync(TestDb db, Guid labelId, string name)
+    {
+        using (var other = db.CreateSecondContext())
+        {
+            var stored = await other.Set<Label>().SingleAsync(l => l.Id == labelId);
+            stored.Name = name;
+            await other.SaveChangesAsync();
+        }
+        db.Context.ChangeTracker.Clear();
+    }
+
+    [Fact]
+    public async Task lambda只是載入父標籤來讀_名稱帶前後空白的舊資料不會被改寫()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        await WriteLegacyNameAsync(db, parent.Id, "legacy ");
+
+        await db.Store.UpdateAsync(child.Id, l =>
+        {
+            db.Context.Entry(l).Reference(x => x.Parent).Load();   // 只為了讀父標籤
+            l.Color = l.Parent!.Color ?? "#111111";
+        });
+
+        (await StoredAsync(db, parent.Id)).Name.Should().Be("legacy ", "lambda 從沒寫過父標籤的名稱");
+        (await StoredAsync(db, child.Id)).Color.Should().Be("#111111");
+    }
+
+    [Fact]
+    public async Task lambda只是載入父標籤來讀_名稱超過上限的舊資料不會讓UpdateAsync失敗()
+    {
+        // SQL Server / PostgreSQL 的欄寬就是 64,寫不進這種舊資料;只有 SQLite 不強制長度
+        var provider = Environment.GetEnvironmentVariable("CORNHSU_TEST_PROVIDER")?.ToLowerInvariant() ?? "sqlite";
+        if (provider != "sqlite") return;
+
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        await WriteLegacyNameAsync(db, parent.Id, new string('長', Label.MaxNameLength + 6));
+
+        await db.Store.UpdateAsync(child.Id, l =>
+        {
+            db.Context.Entry(l).Reference(x => x.Parent).Load();
+            l.Color = "#111111";
+        });
+
+        (await StoredAsync(db, child.Id)).Color.Should().Be("#111111");
+    }
+
     // ---- 在偵測變更之前就失敗:經導覽屬性的修改那時還沒寫回外鍵,還原也要撤得掉 ----
 
     [Fact]

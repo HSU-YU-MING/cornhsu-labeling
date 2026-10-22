@@ -125,7 +125,10 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             foreach (var other in tracked)
             {
                 if (ReferenceEquals(other, label)) continue;
-                if (before.TryGetValue(other, out var was) && string.Equals(other.Name, was.Name, StringComparison.Ordinal)) continue;
+                if (before.TryGetValue(other, out var was)
+                        ? string.Equals(other.Name, was.Name, StringComparison.Ordinal)   // lambda 沒改它的名稱
+                        : _db.Entry(other).State == EntityState.Unchanged)                 // lambda 只是載入(讀)進來的既有標籤
+                    continue;   // 不驗也不改寫:舊資料的名稱可能本來就不合現行規則,沒有人要寫它
                 await NormalizeNameForSaveAsync(other, nameof(update), ct).ConfigureAwait(false);
             }
 

@@ -37,6 +37,10 @@
   都拋 `InvalidOperationException`(`update may only change the label being updated (and move other labels through Parent or Children), but it …`),
   並照既有機制還原,什麼都不存。改了別的標籤的 `Id` 也一樣擋下,訊息與改目標 `Id` 相同。
   你在呼叫前自己做、還沒存的修改不受限制,照舊隨這次存檔送出;lambda 只是載入進來讀的標籤也不算修改。
+- **`UpdateAsync` 的 lambda 經 `Parent`／`Children` 搬移別的標籤時,那些標籤的並發戳記也輪換**(patch)。
+  以前只輪換目標標籤的戳記:另一邊拿舊戳記搬同一個標籤會默默蓋掉這次的搬移。現在被搬的標籤也輪換,
+  後存檔的一方拿到 `DbUpdateConcurrencyException`;衝突時被搬的標籤若呼叫前沒有你自己的未存修改,store 會把它重讀,
+  重試就能成功。
 - **`QueryByLabelAsync`／`QueryByLabelsAsync` 對不上任何標籤時,回傳的也是 EF Core 查詢**(patch)。
   以前名稱都不存在、全是空白,或 `LabelMatch.All` 下缺任一名稱時,回傳的是記憶體裡的
   `Enumerable.Empty<T>().AsQueryable()`,接著呼叫 README 教的 `ToListAsync`／`CountAsync`／`AnyAsync`

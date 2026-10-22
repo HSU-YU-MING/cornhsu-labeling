@@ -142,6 +142,20 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                 .ToList();
             await EnsureNoCycleAsync(moved, ct).ConfigureAwait(false);
 
+            // lambda 搬移的別的標籤也是透過 store 的修改,一樣輪換並發戳記:不輪換的話,
+            // 另一邊拿舊戳記搬同一個標籤會默默蓋掉這次的搬移
+            foreach (var other in moved)
+            {
+                if (ReferenceEquals(other, label)) continue;
+                var entry = _db.Entry(other);
+                var movedByLambda = before.TryGetValue(other, out var was)
+                    ? was.ParentId != other.ParentId
+                    : entry.Property(l => l.ParentId).IsModified;   // lambda 自己載入進來再搬的
+                if (!movedByLambda) continue;
+                other.ConcurrencyStamp = Guid.NewGuid();
+                entry.DetectChanges();
+            }
+
             label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
             _db.Entry(label).DetectChanges();          // 新戳記與正規化後的名稱:存檔前的記帳(ArmForSave)要看到目標已是待存
             snapshot.ArmForSave();

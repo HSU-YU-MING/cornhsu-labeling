@@ -3,8 +3,9 @@
 ## [Unreleased]
 
 **產品 bug 修正。** 公開 API 的簽章、資料庫 schema、相依樓地板都沒有變。
-每一條後面標了它單獨算的 semver;整版取最高的那一條:**minor**——`CHSU001` 對巢狀與泛型型別的訊息文字,
-以及 `AddLabeling`／`ApplyLabelModel` 的 null 參數從 `NullReferenceException` 改成 `ArgumentNullException`,
+每一條後面標了它單獨算的 semver;整版取最高的那一條:**minor**——`CHSU001` 對巢狀與泛型型別的訊息文字、
+`AddLabeling`／`ApplyLabelModel` 的 null 參數從 `NullReferenceException` 改成 `ArgumentNullException`、
+`UpdateAsync` 的 lambda 改壞其他標籤名稱時從 `DbUpdateException` 改成提早拋的驗證例外,
 都是有人可能在斷言、在 grep 的對外可見改動。其餘都是 patch。
 
 ### Fixed
@@ -22,10 +23,14 @@
   context 裡其他標籤還沒存的 `ParentId`(它們會在同一次存檔一起送出);lambda 經導覽屬性換了別的標籤的
   父標籤,那些標籤也一起檢查。沿用既有的循環例外與訊息,只多擋下本來就會成環的寫入。
   README 的「`UpdateAsync` 只依 `ParentId` 檢查循環」限制已移除。
-- **`UpdateAsync` 的 lambda 經導覽屬性改了別的標籤的名稱,也照名稱規則驗證**(patch)。以前只驗目標標籤,
-  `UpdateAsync(c.Id, l => l.Parent!.Name = "   ")` 會把空白名稱寫進父標籤(v1.1.0 就有)。現在 lambda 改了名稱的
-  其他標籤、以及經導覽屬性帶進來的新標籤,都照目標標籤的規則去空白、檢查空白、長度與唯一性,
-  例外型別、訊息與 `ParamName` 都沿用既有的。
+- **`UpdateAsync` 的 lambda 經導覽屬性改了別的標籤的名稱,也照名稱規則驗證**(**minor:例外型別改變**)。
+  以前只驗目標標籤,`UpdateAsync(c.Id, l => l.Parent!.Name = "   ")` 會把空白名稱寫進父標籤(v1.1.0 就有)。
+  現在 lambda 改了名稱的其他標籤、以及經導覽屬性帶進來的新標籤,都照目標標籤的規則去空白、檢查空白、長度與唯一性;
+  訊息與 `ParamName` 沿用既有的。lambda 只是載入進來讀的標籤不驗也不改寫(名稱不合現行規則的舊資料照樣留著);
+  占用檢查看得到同一次存檔,其他標籤接手目標讓出的名字(`l.Name = "tmp"; l.Parent!.Name = "a"`)照常成功,
+  目標自己的改名維持只看資料庫。算 minor 的理由:v1.1.0 在資料庫才失敗的寫法(其他標籤改成已被占用、
+  超過欄寬的名稱,或兩個標籤搶同一個名字)以前拋 `DbUpdateException`,現在提早拋 `InvalidOperationException`
+  或 `ArgumentException`;有人接的是 `DbUpdateException` 的話要跟著改。
 - **`QueryByLabelAsync`／`QueryByLabelsAsync` 對不上任何標籤時,回傳的也是 EF Core 查詢**(patch)。
   以前名稱都不存在、全是空白,或 `LabelMatch.All` 下缺任一名稱時,回傳的是記憶體裡的
   `Enumerable.Empty<T>().AsQueryable()`,接著呼叫 README 教的 `ToListAsync`／`CountAsync`／`AnyAsync`

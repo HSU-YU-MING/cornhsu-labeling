@@ -76,9 +76,13 @@ internal sealed class TrackerSnapshot
     /// (把已刪掉的放回去、把已提交的值改回舊值)。
     /// 判斷看的是「每一個都變成 Unchanged 或 detached」,不是「狀態變了」:SavingChanges 攔截器可能在送出前改狀態
     /// (例如 soft-delete 把刪除改成修改),之後資料庫才失敗,那不算接受。
+    /// 消費端自己開了交易(顯式或 System.Transactions 的環境交易)時一律不算:EF 接受了也還沒真的提交,
+    /// 消費端可能接著 rollback,這時留著「已接受」的狀態,追蹤器就和資料庫對不上(例如以為連結已存在、重貼時直接略過)。
     /// </summary>
     public bool SaveAccepted
         => _pending is { Count: > 0 }
+           && _db.Database.CurrentTransaction is null
+           && System.Transactions.Transaction.Current is null
            && _pending.All(p => p.Entry.State is EntityState.Unchanged or EntityState.Detached);
 
     /// <summary>

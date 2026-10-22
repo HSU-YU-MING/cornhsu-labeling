@@ -544,6 +544,52 @@ public class WriteFailureTests
         (await StoredLinkCountAsync(db)).Should().Be(0);
     }
 
+    // ---- 消費端自己的交易:EF 接受了也還沒真的提交,消費端可能 rollback,這時一律還原 ----
+
+    [Fact]
+    public async Task 顯式交易內AttachAsync提交後才拋例外_rollback後重貼_連結真的寫進去()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var note = await db.AddNoteAsync();
+        await db.Store.CreateAsync("論文");
+
+        await using (var tx = await db.Context.Database.BeginTransactionAsync())
+        {
+            after.Armed = true;
+            var act = () => db.Store.AttachAsync(note, "論文");
+            await act.Should().ThrowAsync<InvalidOperationException>();
+            await tx.RollbackAsync();
+        }
+
+        db.Context.ChangeTracker.Entries<LabelLink<TestNote, Guid>>().Should().BeEmpty(
+            "交易還沒提交就失敗:連結要撤掉,不能以 Unchanged 留著讓重貼誤判成已存在");
+        await db.Store.AttachAsync(note, "論文");
+        (await StoredLinkCountAsync(db)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task 環境交易內DeleteAsync提交後才拋例外_一律還原()
+    {
+        // EF 的 SQLite provider 不支援環境交易(System.Transactions),這條只在 SQL Server / PostgreSQL 那兩條線上有意義
+        var provider = Environment.GetEnvironmentVariable("CORNHSU_TEST_PROVIDER")?.ToLowerInvariant() ?? "sqlite";
+        if (provider == "sqlite") return;
+
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var label = await db.Store.CreateAsync("論文");
+
+        using (new System.Transactions.TransactionScope(System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+        {
+            after.Armed = true;
+            var act = () => db.Store.DeleteAsync(label.Id);
+            (await act.Should().ThrowAsync<InvalidOperationException>()).Which.Should().BeSameAs(after.Thrown, "要是攔截器在提交後拋的那個");
+
+            // 判斷「已提交」時看到外層還有交易:消費端可能不 Complete,store 不能假設刪除已經生效
+            db.Context.Entry(label).State.Should().Be(EntityState.Unchanged);
+        }
+    }
+
     // ---- 「已提交」只能從 EF 接受之後的狀態判斷:SavingChanges 攔截器改了狀態、資料庫才失敗,不算 ----
 
     /// <summary>另一個 context 先插入一筆 note,回傳它的 Id:db.Context 再 Add 同 Id 的 note 會在資料庫撞主鍵。</summary>

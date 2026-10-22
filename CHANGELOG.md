@@ -140,12 +140,12 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   參數不合法就什麼都不建立、不存檔。`AutoCreateLabels = false` 的行為不變(缺的名稱照舊一次列出,不做長度檢查)。
   例外型別與訊息不變。
 - **`AttachManyAsync`／`GetLabelsOfManyAsync` 一次給幾萬個實體時分批查詢**。EF Core 10 把 `Contains`
-  展開成一個值一個參數,超過資料庫的參數上限就拋例外:EF 10 + SQLite 上 4 萬個實體拋 `too many SQL variables`
-  (SQLite 上限 32,766;SQL Server 是 2,100)。現在依實體每 1,000 個查一批,對所有 provider 都在上限之內;
+  展開成一個值一個參數,SQLite 上超過參數上限(32,766)就拋例外:EF 10 + SQLite 上 4 萬個實體拋 `too many SQL variables`
+  (SQL Server 上 EF 10 參數太多時會自己改用一個 JSON 參數,不會拋)。現在依實體每 1,000 個查一批,對所有 provider 都在上限之內;
   結果、排序與冪等都不變,4 萬條連結的耗時跟一次查差不多(本機 EF 8 約 2.0 s、EF 10 約 2.4 s)。這是 1.1.0 + EF 10 就有的問題。
 - **以名稱查詢時,子樹裡有幾萬個標籤也照常完成**。`FindByLabel(s)Async`／`QueryByLabel(s)Async` 把名稱連同子孫
-  展開成標籤 Id 集合再查連結,EF Core 10 上同樣一個 Id 一個參數:單一子樹超過約 32,000 個標籤(SQLite)或 2,100 個(SQL Server)
-  就拋例外。`QueryByLabelsAsync` 回傳的是讓你接著組合的 `IQueryable`,只能是一條 SQL、不能分批往返,
+  展開成標籤 Id 集合再查連結,EF Core 10 上同樣一個 Id 一個參數:EF 10 + SQLite 上單一子樹超過約 32,000 個標籤
+  就拋例外(SQL Server 上 EF 10 參數太多時自己改用一個 JSON 參數,不會拋)。`QueryByLabelsAsync` 回傳的是讓你接著組合的 `IQueryable`,只能是一條 SQL、不能分批往返,
   所以 Id 超過 1,000 個時改用 `EF.Parameter`(EF Core 9 起才有)把整個集合當成一個參數送出(SQLite 的 `json_each`、
   SQL Server 的 `OPENJSON`)。SQL Server 的相容性層級低於 130(`UseCompatibilityLevel(120)` 等)時沒有 `OPENJSON`,
   EF 翻譯不出來;store 會先翻譯一次確認,翻不出來就退回 EF 的預設做法(EF 9 內嵌常數、EF 10 一個值一個參數),

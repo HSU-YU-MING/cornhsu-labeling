@@ -12,7 +12,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
 
     /// <summary>
     /// 一次查詢裡 Contains 放的實體主鍵數上限。EF Core 10 把 Contains 展開成一個值一個參數,
-    /// 超過資料庫的參數上限(SQLite 32,766、SQL Server 2,100)就拋例外;1,000 對所有 provider 都安全,
+    /// SQLite 上超過參數上限(32,766)就拋例外(SQL Server 上 EF 10 參數太多時自己改用一個 JSON 參數);1,000 對所有 provider 都安全,
     /// 每批一次往返,幾萬筆也只是幾十次。
     /// </summary>
     internal const int MaxIdsPerQuery = 1_000;

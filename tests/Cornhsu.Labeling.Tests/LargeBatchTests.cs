@@ -6,7 +6,7 @@ namespace Cornhsu.Labeling.Tests;
 
 /// <summary>
 /// 一次給幾萬個實體的批次 API,以及子樹裡有幾萬個標籤的名稱查詢。EF Core 10 把 <c>Contains</c> 展開成一個值一個參數,
-/// 超過資料庫的參數上限(SQLite 32,766、SQL Server 2,100)就拋例外。
+/// SQLite 上超過參數上限(32,766)就拋例外(EF 10 + SQL Server 參數太多時會自己改用一個 JSON 參數,不會拋)。
 /// 筆數依 provider 取剛好跨過那個上限的量,SQLite 那條在 EF 10 線上才量得到差別。
 /// </summary>
 [Collection(PerformanceGuardCollection.Name)]   // 筆數大,不跟其他測試搶 CPU

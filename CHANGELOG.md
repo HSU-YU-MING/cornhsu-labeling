@@ -5,7 +5,7 @@
 **行為的 major,不是 API 的 major。** 公開型別與成員、資料庫 schema、相依樓地板(EF Core 8.0.11、
 Roslyn 4.8)都沒有變:以反射比對 v1.1.0 的 net8.0 與 netstandard2.0 組件,公開表面逐行相同,升級不必改任何簽章,
 也不需要 migration。升 major 是因為兩項語意改動會讓 1.x 的部分呼叫改變結果——以名稱查詢的四支 API 改依資料庫
-collation 比對名稱、`UpdateAsync` 的 lambda 只能改目標標籤本身——加上 registry 封存後整個不可變
+collation 比對名稱、`UpdateAsync` 的 lambda 只能改目標標籤本身——加上 registry 封存後鎖住進 EF model 的設定
 (`LabelStoreFactory.Create` 也跟 `AddLabeling` 一樣封存),以及幾項對外可見的例外型別與訊息改變。
 其餘是 bug 修正:寫入失敗時把自己動過的追蹤器還原、`UpdateAsync` 的循環檢查看得到導覽屬性、
 EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
@@ -58,21 +58,18 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
 4. **`GetLabelsOfManyAsync` 的排序改跟資料庫 collation 走**(與 `GetLabelsOfAsync`／`GetAllAsync` 一致)。
    SQL Server 預設、PostgreSQL 語言學 collation 上,`SortOrder` 相同、大小寫混雜的名稱順序會改變。
    要 1.x 的順序:`labels.OrderBy(l => l.SortOrder).ThenBy(l => l.Name, StringComparer.Ordinal)`。
-5. **registry 封存後整個不可變,而且 `LabelStoreFactory.Create` 也會封存。** 兩條路徑一致:`AddLabeling` 跑完 `configure`、
-   或第一次 `LabelStoreFactory.Create` 之後,再呼叫 `registry.Labelable<T>()` 拋 `InvalidOperationException`
-   (`LabelRegistry is sealed; no further types can be registered.`),再設定 `LabelTableName`、`LinkTablePrefix`、
-   `AutoCreateLabels` 也拋(`LabelRegistry is sealed; {屬性名} can no longer be changed.`)。1.x 的 `Create` 不封存,
-   兩條路徑的三個屬性也都隨時可改。
+5. **registry 封存後,進 EF model 的設定就固定了;`LabelStoreFactory.Create` 也會封存。** 兩條路徑一致:`AddLabeling` 跑完
+   `configure`、或第一次 `LabelStoreFactory.Create` 之後,再呼叫 `registry.Labelable<T>()` 拋 `InvalidOperationException`
+   (`LabelRegistry is sealed; no further types can be registered.`),把 `LabelTableName`、`LinkTablePrefix` 改成別的值
+   也拋(`LabelRegistry is sealed; {屬性名} can no longer be changed.`;設成原本的值不算修改,照常放行)。
+   `AutoCreateLabels` 不進 model,照樣隨時可改,也立刻作用在共用這個 registry 的每個 store。
+   1.x 的 `Create` 不封存,兩條路徑的表名與前綴也都隨時可改。
    - 舊:`var store = LabelStoreFactory.Create(db, registry); registry.Labelable<Extra>();`
      新:先註冊再建 store——`registry.Labelable<Extra>(); var store = LabelStoreFactory.Create(db, registry);`
-   - 舊:`var store = LabelStoreFactory.Create(db, registry); registry.AutoCreateLabels = false;`
-     新:`var registry = new LabelRegistry { AutoCreateLabels = false };`,或至少在第一次 `Create` 之前設定。
-   - 舊:`services.AddLabeling<AppDbContext>(r => r.Labelable<Note>());` 之後再從容器取出
-     `LabelRegistry` 改 `LabelTableName`／`LinkTablePrefix`／`AutoCreateLabels`。
-     新:全部寫在 `configure` 裡——`services.AddLabeling<AppDbContext>(r => { r.Labelable<Note>(); r.AutoCreateLabels = false; });`
-   - 舊:執行中切換 `AutoCreateLabels`(例如匯入時暫時開啟自動建立)。新:不再支援;需要的流程先用
-     `CreateAsync` 建好標籤再貼,或在 `AutoCreateLabels = false` 時接住列出缺漏名稱的例外。
-   - 型別或設定分散在各模組的話,在第一次 `Create`(也是第一個 DbContext 建 model)之前全部收齊;
+   - 舊:`services.AddLabeling<AppDbContext>(r => r.Labelable<Note>());` 之後再從容器取出 `LabelRegistry`
+     改 `LabelTableName`／`LinkTablePrefix`。
+     新:寫在 `configure` 裡——`services.AddLabeling<AppDbContext>(r => { r.Labelable<Note>(); r.LinkTablePrefix = "Tag_"; });`
+   - 型別或表名設定分散在各模組的話,在第一次 `Create`(也是第一個 DbContext 建 model)之前全部收齊;
      registry 照舊是全 App 一份,之後每個 DbContext 各自 `Create` 不受影響。
 
 ### 公開 API 與相依
@@ -199,12 +196,12 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   訊息與改目標 `Id` 相同。你在呼叫前自己做、還沒存的修改不受限制,照舊隨這次存檔送出;
   lambda 只是載入進來讀的標籤也不算修改。1.x 為了讓「目標讓出名字、別的標籤接手」這類寫法繼續成功而加的
   其他標籤名稱驗證與讓出判斷,隨之整段拿掉。
-- **registry 封存後整個不可變;`LabelStoreFactory.Create` 建完 store 之後也封存**(破壞性,遷移見上方 5)。
+- **registry 封存後鎖住進 EF model 的設定;`LabelStoreFactory.Create` 建完 store 之後也封存**(破壞性,遷移見上方 5)。
   以前只有 `AddLabeling` 封存,而且封存只擋註冊型別:不經 DI 的路徑在 `Create` 之後還能註冊型別,
   兩條路徑都還能改 `LabelTableName`／`LinkTablePrefix`,都不會報錯。但 EF Core 的 model 以 DbContext 型別快取,
   model 建好之後才註冊的型別不在 model 裡、改過的表名或前綴跟快取的 model 對不上,要到貼標或查詢時才以
-  缺表之類的資料庫錯誤冒出來,或者完全沒有錯誤訊息。現在封存後註冊型別與設定三個屬性都拋例外,錯誤出現在寫錯的那一行;
-  `AutoCreateLabels` 不影響 model,一併鎖住是為了讓「封存後整個不可變」沒有例外。
+  缺表之類的資料庫錯誤冒出來,或者完全沒有錯誤訊息。現在封存後註冊型別、把表名或前綴改成別的值都拋例外,
+  錯誤出現在寫錯的那一行;設成原本的值不算修改。`AutoCreateLabels` 不進 model,維持隨時可改(例如匯入時暫時開啟)。
   參數檢查失敗(`context` 或 `registry` 為 null)時不封存。
 - **`UpdateAsync` 每次呼叫多了掃過追蹤器的成本**(行為不變)。還原、「只能改目標」的檢查與循環檢查要求在
   lambda 前後各看一遍追蹤中的項目(開著自動偵測時,lambda 之前先整個偵測一次);追蹤 1,000 個標籤、

@@ -198,14 +198,16 @@ static async Task WithoutDiContainer()
     await store.AttachAsync(note, "paper");
     Check((await store.FindByLabelAsync("paper")).Count == 1, "LabelStoreFactory.Create:不經 DI 容器也能用");
 
-    // README:Create 會像 AddLabeling 一樣封存 registry,之後註冊型別、設定屬性都會拋例外
+    // README:Create 會像 AddLabeling 一樣封存 registry——之後註冊型別、改表名或前綴會拋例外,AutoCreateLabels 照樣可改
     var typeRejected = false;
     try { registry.Labelable<Note>(); }
     catch (InvalidOperationException ex) when (ex.Message.Contains("sealed")) { typeRejected = true; }
-    var propertyRejected = false;
-    try { registry.AutoCreateLabels = false; }
-    catch (InvalidOperationException ex) when (ex.Message.Contains("sealed")) { propertyRejected = true; }
-    Check(typeRejected && propertyRejected, "LabelStoreFactory.Create:建完 store 之後 registry 已封存、不可再改");
+    var prefixRejected = false;
+    try { registry.LinkTablePrefix = "Other_"; }
+    catch (InvalidOperationException ex) when (ex.Message.Contains("sealed")) { prefixRejected = true; }
+    registry.AutoCreateLabels = false;
+    Check(typeRejected && prefixRejected && !registry.AutoCreateLabels,
+        "LabelStoreFactory.Create:建完 store 之後型別與表名已封存,AutoCreateLabels 照樣可改");
 }
 
 static void Render(Note note, IReadOnlyList<Label> labels)

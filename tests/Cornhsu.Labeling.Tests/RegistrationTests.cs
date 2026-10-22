@@ -250,23 +250,42 @@ public class RegistrationTests
         (await store.FindByLabelAsync("論文")).Should().ContainSingle();
     }
 
-    // ---- 2.0:封存後 registry 整個不可變,三個屬性也不能再設定(兩條路徑都一樣) ----
+    // ---- 2.0:封存後鎖住會進 EF model 的設定(型別、表名、前綴);AutoCreateLabels 隨時可改(兩條路徑都一樣) ----
 
-    private static void SetProperty(LabelRegistry registry, string property)
+    private static void SetProperty(LabelRegistry registry, string property, bool sameValue = false)
     {
         switch (property)
         {
-            case nameof(LabelRegistry.LabelTableName): registry.LabelTableName = "Other"; break;
-            case nameof(LabelRegistry.LinkTablePrefix): registry.LinkTablePrefix = "Other_"; break;
-            default: registry.AutoCreateLabels = false; break;
+            case nameof(LabelRegistry.LabelTableName): registry.LabelTableName = sameValue ? registry.LabelTableName : "Other"; break;
+            default: registry.LinkTablePrefix = sameValue ? registry.LinkTablePrefix : "Other_"; break;
+        }
+    }
+
+    private static (LabelRegistry Registry, IDisposable Owner) FactorySealedRegistry()
+    {
+        var registry = new LabelRegistry { AutoCreateLabels = false };   // 封存前照常可以設定
+        registry.Labelable<TestNote>(n => n.Title);
+        var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var options = new DbContextOptionsBuilder<TestDbContext>()
+            .UseSqlite(conn).EnableServiceProviderCaching(false).Options;
+        var context = new TestDbContext(options, registry);
+        LabelStoreFactory.Create(context, registry);
+        return (registry, new CompositeDisposable(context, conn));
+    }
+
+    private sealed class CompositeDisposable(params IDisposable[] items) : IDisposable
+    {
+        public void Dispose()
+        {
+            foreach (var item in items) item.Dispose();
         }
     }
 
     [Theory]
     [InlineData(nameof(LabelRegistry.LabelTableName))]
     [InlineData(nameof(LabelRegistry.LinkTablePrefix))]
-    [InlineData(nameof(LabelRegistry.AutoCreateLabels))]
-    public void AddLabeling封存後_設定屬性拋例外_值不變(string property)
+    public void AddLabeling封存後_改表名或前綴拋例外_值不變(string property)
     {
         using var db = new TestDb();   // AddLabeling 內部已 Seal()
 
@@ -274,31 +293,63 @@ public class RegistrationTests
 
         act.Should().Throw<InvalidOperationException>()
             .WithMessage($"LabelRegistry is sealed; {property} can no longer be changed.");
-        (db.Registry.LabelTableName, db.Registry.LinkTablePrefix, db.Registry.AutoCreateLabels)
-            .Should().Be(("Label", "LabelLink_", true));
+        (db.Registry.LabelTableName, db.Registry.LinkTablePrefix).Should().Be(("Label", "LabelLink_"));
     }
 
     [Theory]
     [InlineData(nameof(LabelRegistry.LabelTableName))]
     [InlineData(nameof(LabelRegistry.LinkTablePrefix))]
-    [InlineData(nameof(LabelRegistry.AutoCreateLabels))]
-    public void Factory建立store之後_設定屬性拋例外_值不變(string property)
+    public void Factory建立store之後_改表名或前綴拋例外_值不變(string property)
     {
-        var registry = new LabelRegistry { AutoCreateLabels = false };   // 封存前照常可以設定
-        registry.Labelable<TestNote>();
-        using var conn = new SqliteConnection("DataSource=:memory:");
-        conn.Open();
-        var options = new DbContextOptionsBuilder<TestDbContext>()
-            .UseSqlite(conn).EnableServiceProviderCaching(false).Options;
-        using var context = new TestDbContext(options, registry);
-        LabelStoreFactory.Create(context, registry);
+        var (registry, owner) = FactorySealedRegistry();
+        using var _ = owner;
 
         var act = () => SetProperty(registry, property);
 
         act.Should().Throw<InvalidOperationException>()
             .WithMessage($"LabelRegistry is sealed; {property} can no longer be changed.");
-        (registry.LabelTableName, registry.LinkTablePrefix, registry.AutoCreateLabels)
-            .Should().Be(("Label", "LabelLink_", false));
+        (registry.LabelTableName, registry.LinkTablePrefix).Should().Be(("Label", "LabelLink_"));
+    }
+
+    [Theory]
+    [InlineData(nameof(LabelRegistry.LabelTableName))]
+    [InlineData(nameof(LabelRegistry.LinkTablePrefix))]
+    public void 封存後設成同一個值_不算修改_不拋例外(string property)
+    {
+        // 共用的設定程式重跑一次、或把預設值明寫出來,都不會讓 model 對不上;只有真的改值才擋
+        using var db = new TestDb();
+        var (registry, owner) = FactorySealedRegistry();
+        using var _ = owner;
+
+        db.Registry.Invoking(r => SetProperty(r, property, sameValue: true)).Should().NotThrow();
+        registry.Invoking(r => SetProperty(r, property, sameValue: true)).Should().NotThrow();
+    }
+
+    [Fact]
+    public async Task AddLabeling封存後_AutoCreateLabels照樣隨時可改_而且立刻生效()
+    {
+        using var db = new TestDb();
+        var note = await db.AddNoteAsync();
+
+        db.Registry.AutoCreateLabels = false;
+        var curated = () => db.Store.AttachAsync(note, "未建立");
+        await curated.Should().ThrowAsync<InvalidOperationException>().WithMessage("*AutoCreateLabels is disabled*");
+
+        db.Registry.AutoCreateLabels = true;   // 例如匯入時暫時開啟
+        await db.Store.AttachAsync(note, "未建立");
+        (await db.Store.GetLabelsOfAsync(note)).Should().ContainSingle().Which.Name.Should().Be("未建立");
+    }
+
+    [Fact]
+    public void Factory建立store之後_AutoCreateLabels照樣隨時可改()
+    {
+        var (registry, owner) = FactorySealedRegistry();
+        using var _ = owner;
+
+        registry.AutoCreateLabels = true;
+        registry.AutoCreateLabels.Should().BeTrue();
+        registry.AutoCreateLabels = false;
+        registry.AutoCreateLabels.Should().BeFalse();
     }
 
     [Fact]

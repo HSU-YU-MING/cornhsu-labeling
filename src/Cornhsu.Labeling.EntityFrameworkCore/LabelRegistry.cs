@@ -5,8 +5,9 @@ namespace Cornhsu.Labeling.EntityFrameworkCore;
 /// because EF Core's model cache is keyed by DbContext type — handing the same DbContext a
 /// different registry would give you a wrongly cached model.
 /// <see cref="ServiceCollectionExtensions.AddLabeling{TContext}"/> and <see cref="LabelStoreFactory.Create{TContext}"/>
-/// seal it: from then on the registry is immutable, and registering a type or setting any property throws
-/// <see cref="InvalidOperationException"/>. Configure everything before that point.
+/// seal it. From then on everything that goes into the EF model is fixed: registering a type, or changing
+/// <see cref="LabelTableName"/> or <see cref="LinkTablePrefix"/> to a different value, throws
+/// <see cref="InvalidOperationException"/>. <see cref="AutoCreateLabels"/> can still be changed at any time.
 /// </summary>
 public sealed class LabelRegistry
 {
@@ -14,7 +15,6 @@ public sealed class LabelRegistry
     private bool _sealed;
     private string _labelTableName = "Label";
     private string _linkTablePrefix = "LabelLink_";
-    private bool _autoCreateLabels = true;
 
     /// <summary>Descriptors of every registered type (only the descriptive information is public).</summary>
     public IReadOnlyList<ILabelableDescriptor> Descriptors => _descriptors;
@@ -22,21 +22,25 @@ public sealed class LabelRegistry
     /// <summary>內部管線視角(建表與連結表操作)。</summary>
     internal IReadOnlyList<ILabelableOperations> Operations => _descriptors;
 
-    /// <summary>Table name for Label itself; defaults to "Label". Cannot be set once the registry is sealed.</summary>
+    /// <summary>
+    /// Table name for Label itself; defaults to "Label". It goes into the EF model, so once the registry is
+    /// sealed it cannot be changed (assigning the value it already has is allowed and does nothing).
+    /// </summary>
     public string LabelTableName
     {
         get => _labelTableName;
-        set => _labelTableName = Unsealed(nameof(LabelTableName), value);
+        set => _labelTableName = Unsealed(nameof(LabelTableName), _labelTableName, value);
     }
 
     /// <summary>
     /// Table-name prefix for link tables; defaults to "LabelLink_". The full name is prefix + TypeKey.
-    /// Cannot be set once the registry is sealed.
+    /// It goes into the EF model, so once the registry is sealed it cannot be changed (assigning the value it
+    /// already has is allowed and does nothing).
     /// </summary>
     public string LinkTablePrefix
     {
         get => _linkTablePrefix;
-        set => _linkTablePrefix = Unsealed(nameof(LinkTablePrefix), value);
+        set => _linkTablePrefix = Unsealed(nameof(LinkTablePrefix), _linkTablePrefix, value);
     }
 
     /// <summary>
@@ -44,13 +48,10 @@ public sealed class LabelRegistry
     /// Apps with a "curated" label set (labels carry colors/icons and are created deliberately through an
     /// admin screen) should set this to false: <c>AttachAsync</c> then throws a clear exception for an
     /// unknown label instead of silently creating a bare one with no color and no icon.
-    /// Cannot be set once the registry is sealed.
+    /// It does not affect the EF model, so it can be changed at any time, also after the registry is sealed;
+    /// the change applies to every store that shares the registry.
     /// </summary>
-    public bool AutoCreateLabels
-    {
-        get => _autoCreateLabels;
-        set => _autoCreateLabels = Unsealed(nameof(AutoCreateLabels), value);
-    }
+    public bool AutoCreateLabels { get; set; } = true;
 
     /// <summary>
     /// Registers a labelable type. The key type is inferred from <see cref="ILabelable{TKey}"/>,
@@ -82,12 +83,14 @@ public sealed class LabelRegistry
     internal void Seal() => _sealed = true;
 
     /// <summary>
-    /// 封存後 registry 整個不可變。表名與前綴會進 EF 的 model,而 model 以 DbContext 型別快取:
-    /// 封存後再改,名稱會和快取的 model 默默對不上(沒有任何錯誤訊息);AutoCreateLabels 不影響 model,
-    /// 但設定物件「封存後全部不可改」比較好理解。
+    /// 封存後鎖住會進 EF model 的設定。表名與前綴會進 model,而 model 以 DbContext 型別快取:
+    /// 封存後再改,名稱會和快取的 model 默默對不上(沒有任何錯誤訊息)。設成同一個值不會讓 model 對不上,
+    /// 放行(共用的設定程式重跑、把預設值明寫出來都不該失敗)。AutoCreateLabels 不進 model,不在此列。
     /// </summary>
-    private T Unsealed<T>(string property, T value)
-        => _sealed ? throw new InvalidOperationException($"LabelRegistry is sealed; {property} can no longer be changed.") : value;
+    private string Unsealed(string property, string current, string value)
+        => _sealed && !string.Equals(current, value, StringComparison.Ordinal)
+            ? throw new InvalidOperationException($"LabelRegistry is sealed; {property} can no longer be changed.")
+            : value;
 
     internal ILabelableOperations Require<TEntity>() where TEntity : class, ILabelable
         => _descriptors.FirstOrDefault(d => d.ClrType == typeof(TEntity))

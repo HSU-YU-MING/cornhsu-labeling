@@ -106,8 +106,8 @@ services.AddLabeling<AppDbContext>(r =>
 所以之後把 `Note` 改名,它的表也會跟著改名(下一個 migration 會 drop 掉 `LabelLink_Note`、
 以新名稱另建一張空表)。類別名稱可能會改的話,註冊時把鍵釘住:
 `r.Labelable<Note>(n => n.Title, typeKey: "Note")`。前綴與 `Label` 表名分別是
-`r.LinkTablePrefix` 與 `r.LabelTableName`;跟 registry 上的其他設定一樣,請在註冊的 callback 裡設定——
-`AddLabeling` 跑完之後 registry 就封存、不可再改。
+`r.LinkTablePrefix` 與 `r.LabelTableName`;請在註冊的 callback 裡設定——它們會進 EF model,
+`AddLabeling` 跑完、registry 封存之後就不能再改。
 
 泛型的實體型別一定要釘住型別鍵。預設取的是 CLR 名稱,`Box<int>` 會得到 ``Box`1``:表名帶反引號,
 而且所有 `Box<…>` 共用這個鍵,第二個建構型別就註冊不進去。
@@ -208,10 +208,9 @@ using var db = new AppDbContext(options, registry);
 var store = LabelStoreFactory.Create(db, registry);   // 第三個參數可選:ILogger<ILabelStore>
 ```
 
-store 不擁有 DbContext,釋放它仍是你的責任。`Create` 會像 `AddLabeling` 一樣封存 registry,
-封存後的 registry 不可再改:所有型別與屬性(`AutoCreateLabels`、`LabelTableName`、`LinkTablePrefix`)
-都要在第一次呼叫之前設定完,之後再呼叫 `Labelable` 或設定屬性會拋例外。同一個 registry 建立更多 store
-(例如每個 DbContext 一個)沒有問題。
+store 不擁有 DbContext,釋放它仍是你的責任。`Create` 會像 `AddLabeling` 一樣封存 registry,封存後進 EF model 的設定就固定了:
+所有型別與 `LabelTableName`、`LinkTablePrefix` 都要在第一次呼叫之前設定完,之後再呼叫 `Labelable` 或改這兩個屬性會拋例外。
+`AutoCreateLabels` 隨時都能改。同一個 registry 建立更多 store(例如每個 DbContext 一個)沒有問題。
 
 ## 使用 EF Core Migrations
 

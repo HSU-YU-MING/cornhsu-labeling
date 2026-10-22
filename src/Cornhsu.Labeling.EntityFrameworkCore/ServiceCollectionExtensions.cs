@@ -9,8 +9,9 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers the labeling system: builds and seals a <see cref="LabelRegistry"/> (Singleton),
     /// and registers <see cref="ILabelStore"/> (Scoped) backed by <typeparamref name="TContext"/>.
-    /// Once sealed the registry is immutable, so register the types and set the registry's properties
-    /// inside <paramref name="configure"/>.
+    /// Once sealed, what goes into the EF model is fixed, so register the types and set
+    /// <see cref="LabelRegistry.LabelTableName"/> and <see cref="LabelRegistry.LinkTablePrefix"/> inside
+    /// <paramref name="configure"/>; <see cref="LabelRegistry.AutoCreateLabels"/> can still be changed later.
     /// </summary>
     /// <typeparam name="TContext">Your application's DbContext.</typeparam>
     /// <param name="services">The DI service collection.</param>

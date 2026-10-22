@@ -111,8 +111,8 @@ Each type's link table is named `LabelLink_` + its type key, and the type key de
 name — so renaming `Note` later renames its table too (the next migration drops `LabelLink_Note` and
 creates an empty table under the new name). If the class name may change, pin the key at
 registration: `r.Labelable<Note>(n => n.Title, typeKey: "Note")`. The prefix and the `Label` table
-name are `r.LinkTablePrefix` and `r.LabelTableName`; like everything on the registry, set them inside the
-registration callback — the registry is sealed, and immutable, once `AddLabeling` has run.
+name are `r.LinkTablePrefix` and `r.LabelTableName`; set them inside the registration callback — they go
+into the EF model, so they cannot be changed once `AddLabeling` has run and sealed the registry.
 
 A generic entity type must always pin its key. The default is the CLR name, which for `Box<int>` is
 ``Box`1``: the table name gets a backtick, and every construction of `Box<…>` shares that key, so a
@@ -222,10 +222,10 @@ var store = LabelStoreFactory.Create(db, registry);   // optional third argument
 ```
 
 The store does not own the DbContext; disposing it stays with you. `Create` seals the registry, as
-`AddLabeling` does, and a sealed registry is immutable: register every type and set its properties
-(`AutoCreateLabels`, `LabelTableName`, `LinkTablePrefix`) before the first call, because `Labelable` and
-the property setters throw afterwards. Creating more stores over the same registry (one per DbContext,
-say) is fine.
+`AddLabeling` does, which fixes what goes into the EF model: register every type and set
+`LabelTableName` and `LinkTablePrefix` before the first call, because afterwards `Labelable` and changing
+those two throw. `AutoCreateLabels` can still be changed at any time. Creating more stores over the same
+registry (one per DbContext, say) is fine.
 
 ## Using EF Core migrations
 

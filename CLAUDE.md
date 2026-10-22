@@ -22,7 +22,7 @@ D:\擴充功能\nuget\Labeling\cornhsu-labeling\   ← 真正的 git repo 在這
 ## 指令
 
 - 建置：`dotnet build Cornhsu.Labeling.slnx`
-- 測試：`dotnet test`——300 條（主測試 280 + analyzer 20）。動了 `src/` 的任何東西**必跑**。
+- 測試：`dotnet test`——318 條（主測試 298 + analyzer 20）。動了 `src/` 的任何東西**必跑**。
   預設走 **SQLite in-memory**，秒級。
 - 換 provider 跑同一套測試（環境變數，見 `tests/.../TestInfrastructure.cs`）：
 
@@ -104,8 +104,8 @@ README 的 Design trade-offs 已經完整寫了「為什麼是每型別一張連
 - **`LabelRegistry` 必須是全 App 單例。** EF Core 的 model cache 以 DbContext 型別為 key，
   同一個 DbContext 型別配到不同 registry 會拿到**錯誤的快取 model，而且完全沒有錯誤訊息**。
   `AddLabeling` 已經註冊成 Singleton 並在建完之後 `Seal()`；不經 DI 的 `LabelStoreFactory.Create` 也會 `Seal()`（2.0）。
-  封存後 registry 整個不可變（2.0）：`Labelable` 與 `LabelTableName`／`LinkTablePrefix`／`AutoCreateLabels` 的 setter 都拋例外——
-  表名與前綴會進快取的 model，封存後再改只會默默對不上。
+  封存後鎖住進 EF model 的設定（2.0）：`Labelable`、把 `LabelTableName`／`LinkTablePrefix` 改成別的值都拋例外——
+  表名與前綴會進快取的 model，封存後再改只會默默對不上。`AutoCreateLabels` 不進 model，刻意維持隨時可改。
   測試能繞過這件事，是因為 `TestInfrastructure` 每個 `TestDb` 都加了
   `EnableServiceProviderCaching(false)` 隔離內部 provider——**正式 App 不需要也不該加那行**。
 - **`Label` 保持最小**，只留視覺識別欄位（Name / Color / Icon / 階層 / 排序）。

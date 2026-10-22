@@ -203,6 +203,10 @@ internal sealed class TrackerSnapshot
 
         if (item.State == EntityState.Modified && item.Modified is not null)
         {
+            // 先把狀態放回 Modified:EF 不會因為設了 IsModified 就把 Deleted(例如刪標籤時 cascade 到的項目)改回來,
+            // 停在 Deleted 的話下一次存檔就把它刪掉。設成 Modified 會把每個欄位都標成已修改,接著逐欄放回記下的旗標
+            if (entry.State != EntityState.Modified)
+                entry.State = EntityState.Modified;
             foreach (var property in entry.Properties)
                 property.IsModified = item.Modified.Contains(property.Metadata.Name);
         }

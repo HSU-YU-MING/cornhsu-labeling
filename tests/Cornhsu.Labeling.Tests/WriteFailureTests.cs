@@ -305,6 +305,53 @@ public class WriteFailureTests
     }
 
     [Fact]
+    public async Task DeleteAsync存檔失敗後_標籤本身有消費端的未存修改_回到Modified_不會在下次存檔被刪()
+    {
+        var failure = new FailOnce(c => c.ChangeTracker.Entries<Label>().Any(e => e.State == EntityState.Deleted));
+        using var db = new TestDb(null, failure);
+        var label = await db.Store.CreateAsync("論文");
+        label.Color = "#111111";   // 消費端自己的未存修改:記下時是 Modified
+
+        var act = () => db.Store.DeleteAsync(label.Id);
+        await act.Should().ThrowAsync<DbUpdateException>();
+
+        var entry = db.Context.Entry(label);
+        entry.State.Should().Be(EntityState.Modified, "不能停在 Deleted,不然下一次存檔就把它刪掉");
+        entry.Properties.Where(p => p.IsModified).Select(p => p.Metadata.Name).Should().Equal(new[] { nameof(Label.Color) });
+        await db.Context.SaveChangesAsync();
+        var stored = (await StoredLabelsAsync(db)).Should().ContainSingle().Subject;
+        stored.Color.Should().Be("#111111");
+    }
+
+    [Fact]
+    public async Task DeleteAsync存檔失敗後_必填cascade參照者有消費端的未存修改_回到Modified_不會在下次存檔被刪()
+    {
+        var failure = new FailOnce(c => c.ChangeTracker.Entries<Label>().Any(e => e.State == EntityState.Deleted));
+        using var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var registry = new LabelRegistry().Labelable<TestNote>();
+        var options = new DbContextOptionsBuilder<ClassifiedDbContext>()
+            .UseSqlite(conn).EnableServiceProviderCaching(false).AddInterceptors(failure).Options;
+        using var context = new ClassifiedDbContext(options, registry);
+        context.Database.EnsureCreated();
+        var store = LabelStoreFactory.Create(context, registry);
+        var label = await store.CreateAsync("分類");
+        var pin = new Pin { Id = Guid.NewGuid(), LabelId = label.Id, Memo = "原本" };
+        context.Add(pin);
+        await context.SaveChangesAsync();
+        pin.Memo = "改過";   // 消費端自己的未存修改;刪標籤時 EF 會把它 cascade 成刪除
+
+        var act = () => store.DeleteAsync(label.Id);
+        await act.Should().ThrowAsync<DbUpdateException>();
+
+        context.Entry(pin).State.Should().Be(EntityState.Modified);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        (await context.Set<Pin>().SingleAsync()).Memo.Should().Be("改過");
+        (await context.Set<Label>().CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
     public async Task DeleteAsync存檔失敗後_多層cascade下去的項目也還原()
     {
         var failure = new FailOnce(c => c.ChangeTracker.Entries<Label>().Any(e => e.State == EntityState.Deleted));
@@ -899,6 +946,7 @@ public class Pin
     public Guid Id { get; set; }
     public Guid LabelId { get; set; }
     public Label? Label { get; set; }
+    public string Memo { get; set; } = "";
 }
 
 /// <summary>參照 <see cref="Pin"/> 的實體:刪標籤時被第二層 cascade 刪除。</summary>

@@ -419,7 +419,7 @@ with network latency the difference is 49 round trips.
   DbContext scope. When a write method throws — a rejected update or a failed save — it first takes
   back the changes it made to the context, so they are not saved later by accident and the context
   stays usable. Your own pending changes are left as they were, with one exception: after a
-  concurrency conflict, the label being written is reloaded (see the previous point).
+  concurrency conflict, the label being written is reloaded (see "Concurrent modification protection" above).
 - **EF Core 8+ only.** The dependency floor is 8.0.11 (the 8.0-series version with known
   vulnerability advisories patched); consumers on EF Core 9 or 10 unify automatically.
 - For tests, use **SQLite in-memory rather than the EF InMemory provider** — the latter does not

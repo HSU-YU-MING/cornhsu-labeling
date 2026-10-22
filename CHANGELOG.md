@@ -194,8 +194,7 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   `ChangeTracker.CascadeDeleteTiming` 設成 `OnSaveChanges`(結束後放回原值),所以被拒絕的刪除不會留下 EF 當下
   就串聯標成刪除的連結。改了別的標籤的 `Id` 也一樣擋下,
   訊息與改目標 `Id` 相同。你在呼叫前自己做、還沒存的修改不受限制,照舊隨這次存檔送出;
-  lambda 只是載入進來讀的標籤也不算修改。1.x 為了讓「目標讓出名字、別的標籤接手」這類寫法繼續成功而加的
-  其他標籤名稱驗證與讓出判斷,隨之整段拿掉。
+  lambda 只是載入進來讀的標籤也不算修改。
 - **registry 封存後鎖住進 EF model 的設定;`LabelStoreFactory.Create` 建完 store 之後也封存**(破壞性,遷移見上方 5)。
   以前只有 `AddLabeling` 封存,而且封存只擋註冊型別:不經 DI 的路徑在 `Create` 之後還能註冊型別,
   兩條路徑都還能改 `LabelTableName`／`LinkTablePrefix`,都不會報錯。但 EF Core 的 model 以 DbContext 型別快取,

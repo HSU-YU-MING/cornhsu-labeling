@@ -85,6 +85,31 @@ public class ConcurrencyTests
     }
 
     [Fact]
+    public async Task 被lambda搬移的標籤帶著消費端的未存修改_撞並發例外後一樣重讀_重試就成功()
+    {
+        // 跟目標標籤同一個規則:被搬的標籤是這次呼叫要寫的,衝突時一律重讀,連你對它的未存修改也丟掉;
+        // 不重讀的話追蹤器留著舊戳記,重試永遠撞同一個衝突(第五輪審查 E4)
+        using var db = new TestDb();
+        var q = await db.Store.CreateAsync("q");
+        var x = await db.Store.CreateAsync("x");
+        using (var other = db.CreateSecondContext())
+        {
+            var otherStore = Cornhsu.Labeling.EntityFrameworkCore.LabelStoreFactory.Create(other, db.Registry);
+            await otherStore.UpdateAsync(x.Id, l => l.Color = "#000000");   // 別人先改了 x
+        }
+        x.Icon = "consumer";   // 你自己對 x 的未存修改(手上的戳記已經舊了)
+
+        var act = () => db.Store.UpdateAsync(q.Id, l => l.Children.Add(x));
+        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+
+        x.Color.Should().Be("#000000", "衝突的被搬標籤重讀成資料庫的值");
+        x.Icon.Should().BeNull("重讀會丟掉你對它的未存修改,跟目標標籤一樣");
+        await db.Store.UpdateAsync(q.Id, l => l.Children.Add(x));
+        using var check = db.CreateSecondContext();
+        (await check.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == x.Id)).ParentId.Should().Be(q.Id);
+    }
+
+    [Fact]
     public async Task UpdateAsync的lambda自己載入別的標籤再搬移_那個標籤的戳記也輪換()
     {
         // 呼叫前不在追蹤器裡、lambda 自己查出來再搬的標籤,一樣是透過 store 的修改

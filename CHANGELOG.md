@@ -104,7 +104,7 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   把那條連結剪掉再還原,context 照常可用。例外型別不變,訊息從 EF 的換成 store 的(見上方破壞性變更 3)。
 - **`UpdateAsync` 的 lambda 經 `Parent`／`Children` 搬移別的標籤時,那些標籤的並發戳記也輪換**。
   以前只輪換目標標籤的戳記:另一邊拿舊戳記搬同一個標籤會默默蓋掉這次的搬移。現在被搬的標籤也輪換,
-  後存檔的一方拿到 `DbUpdateConcurrencyException`;衝突時被搬的標籤若呼叫前沒有你自己的未存修改,store 會把它重讀,
+  後存檔的一方拿到 `DbUpdateConcurrencyException`;衝突時被搬的標籤跟目標標籤一樣一律重讀(連你對它還沒存的修改也丟掉),
   重試就能成功。
 - **`QueryByLabelAsync`／`QueryByLabelsAsync` 對不上任何標籤時,回傳的也是 EF Core 查詢**。
   以前名稱都不存在、全是空白,或 `LabelMatch.All` 下缺任一名稱時,回傳的是記憶體裡的

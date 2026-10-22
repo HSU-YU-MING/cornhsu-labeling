@@ -432,11 +432,11 @@ one that reads its lists with `AsNoTracking()` — does not notice the differenc
   on every modification through the store. It does not rely on any database feature, so behaviour
   is identical across providers. When two callers modify the same label, the one that saves second
   gets a `DbUpdateConcurrencyException` instead of silently overwriting — catch it, then re-read
-  and retry or prompt the user. Before the exception reaches you, the store reloads the label it was
-  writing from the database, so re-reading through the same store (and context) returns the
-  database's values and a retry can succeed. That reload also drops any changes you had made to that
-  label yourself and not saved yet; if the conflict is on something else you had changed yourself,
-  the store leaves it alone.
+  and retry or prompt the user. Before the exception reaches you, the store reloads the labels it was
+  writing from the database — the one being updated, and any label the `UpdateAsync` lambda moved —
+  so re-reading through the same store (and context) returns the database's values and a retry can
+  succeed. That reload also drops any changes you had made to those labels yourself and not saved yet;
+  if the conflict is on something else you had changed yourself, the store leaves it alone.
 - **Tested against SQLite, SQL Server and PostgreSQL** (the same test suite, on every CI run, with
   EF Core 8; the EF Core 9 and 10 runs use SQLite only). Note that name case semantics vary with
   collation.

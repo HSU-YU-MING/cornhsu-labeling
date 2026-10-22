@@ -183,6 +183,9 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                 if (!movedByLambda) continue;
                 other.ConcurrencyStamp = Guid.NewGuid();
                 entry.DetectChanges();
+                // 被搬的標籤也是這次呼叫要寫的:並發衝突時跟目標一樣一律重讀(連消費端對它的未存修改也丟掉),
+                // 不然追蹤器留著舊戳記,重試永遠撞同一個衝突
+                snapshot.Own(other);
             }
 
             label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記

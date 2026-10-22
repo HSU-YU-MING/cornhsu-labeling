@@ -190,6 +190,62 @@ public class UpdateFailureTests
         (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
     }
 
+    // ---- 同一次存檔裡讓出、接手名稱:占用檢查要看得到,v1.1.0 能成功的寫法不能開始拋例外 ----
+
+    [Fact]
+    public async Task lambda裡目標讓出名字_父標籤接手_照常存檔()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("a", parentId: parent.Id);
+
+        await db.Store.UpdateAsync(child.Id, l =>
+        {
+            l.Name = "tmp";
+            l.Parent!.Name = "a";
+        });
+
+        (await StoredAsync(db, parent.Id)).Name.Should().Be("a");
+        (await StoredAsync(db, child.Id)).Name.Should().Be("tmp");
+    }
+
+    [Fact]
+    public async Task lambda讓兩個標籤要用同一個新名字_照樣擋下_資料庫不變()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+
+        var act = () => db.Store.UpdateAsync(child.Id, l =>
+        {
+            l.Name = "新";
+            l.Parent!.Name = "新";
+        });
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("label name '新' is already taken.");
+        (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
+        (await StoredAsync(db, child.Id)).Name.Should().Be("c");
+    }
+
+    [Fact]
+    public async Task 目標自己的改名照v1_1_0只看資料庫_兩個標籤互換名稱照樣擋下()
+    {
+        // 目標要用的名字資料庫裡有人占著,就算占用者在同一次存檔裡改掉也一樣擋(v1.1.0 的行為);
+        // 互換是個環,資料庫的唯一索引沒有辦法排出順序
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+
+        var act = () => db.Store.UpdateAsync(child.Id, l =>
+        {
+            l.Name = "p";
+            l.Parent!.Name = "c";
+        });
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("label name 'p' is already taken.");
+        (await StoredAsync(db, parent.Id)).Name.Should().Be("p");
+    }
+
     /// <summary>繞過 store 直接改資料庫裡的名稱(舊資料、別的工具寫入的),然後清空 db.Context 的追蹤器。</summary>
     private static async Task WriteLegacyNameAsync(TestDb db, Guid labelId, string name)
     {

@@ -122,15 +122,13 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
             // lambda 經導覽屬性改了名稱、或帶進來的其他標籤,同一次存檔會一起寫出去:一樣驗,不能從這裡繞過
             var tracked = _db.ChangeTracker.Entries<Label>().Select(e => e.Entity).ToList();
-            foreach (var other in tracked)
-            {
-                if (ReferenceEquals(other, label)) continue;
-                if (before.TryGetValue(other, out var was)
+            var renamedOthers = tracked
+                .Where(other => !ReferenceEquals(other, label)
+                    && !(before.TryGetValue(other, out var was)
                         ? string.Equals(other.Name, was.Name, StringComparison.Ordinal)   // lambda 沒改它的名稱
-                        : _db.Entry(other).State == EntityState.Unchanged)                 // lambda 只是載入(讀)進來的既有標籤
-                    continue;   // 不驗也不改寫:舊資料的名稱可能本來就不合現行規則,沒有人要寫它
-                await NormalizeNameForSaveAsync(other, nameof(update), ct).ConfigureAwait(false);
-            }
+                        : _db.Entry(other).State == EntityState.Unchanged))               // lambda 只是載入(讀)進來的既有標籤
+                .ToList();   // 沒改的不驗也不改寫:舊資料的名稱可能本來就不合現行規則,沒有人要寫它
+            await ValidateOtherNamesAsync(label, renamedOthers, tracked, nameof(update), ct).ConfigureAwait(false);
 
             // 要檢查的:這個標籤本身(有父標籤時),以及 lambda 換了父標籤的每一個標籤
             var moved = tracked
@@ -546,6 +544,57 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         if (taken)
             throw new InvalidOperationException($"label name '{normalized}' is already taken.");
         label.Name = normalized;
+    }
+
+    /// <summary>
+    /// 驗證 UpdateAsync 的 lambda 經導覽屬性改了名稱(或帶進來)的其他標籤,規則同 <see cref="RenameAsync"/>,
+    /// 但占用檢查看得到同一次存檔:兩個標籤要用同一個名字算占用;資料庫裡的占用者若在這次存檔裡改用別的名字(讓出),不算占用
+    /// ——「目標改成 tmp、父標籤接手目標原本的名字」這種寫法在 v1.1.0 能成功,不能因為逐筆查資料庫而開始失敗。
+    /// 目標標籤自己的改名維持 v1.1.0 的規則(只看資料庫),所以兩個標籤互換名稱(資料庫排不出順序的環)照舊擋在目標那一步。
+    /// </summary>
+    private async Task ValidateOtherNamesAsync(
+        Label target, IReadOnlyList<Label> others, IReadOnlyList<Label> tracked, string paramName, CancellationToken ct)
+    {
+        if (others.Count == 0) return;
+
+        var normalized = new List<(Label Label, string Name)>(others.Count);
+        foreach (var other in others)
+        {
+            var name = Normalize(other.Name)
+                ?? throw new ArgumentException("label name must not be blank.", paramName);
+            ValidateNameLength(name);
+            normalized.Add((other, name));
+        }
+
+        var finalName = new Dictionary<Label, string>(ReferenceEqualityComparer.Instance) { [target] = target.Name };
+        foreach (var (other, name) in normalized)
+            finalName[other] = name;
+
+        var claimed = new Dictionary<string, Label>(StringComparer.Ordinal) { [target.Name] = target };
+        foreach (var (other, name) in normalized)
+        {
+            if (claimed.TryGetValue(name, out var claimant) && !ReferenceEquals(claimant, other))
+                throw new InvalidOperationException($"label name '{name}' is already taken.");
+            claimed[name] = other;
+
+            var id = other.Id;
+            var holders = await _db.Set<Label>().AsNoTracking()
+                .Where(l => l.Name == name && l.Id != id)
+                .Select(l => l.Id)
+                .ToListAsync(ct).ConfigureAwait(false);
+            foreach (var holderId in holders)
+            {
+                var holder = tracked.FirstOrDefault(l => l.Id == holderId);
+                var givesUp = holder is not null
+                    && _db.Entry(holder).Property(l => l.Name).IsModified
+                    && !string.Equals(finalName.TryGetValue(holder, out var next) ? next : holder.Name, name, StringComparison.Ordinal);
+                if (!givesUp)
+                    throw new InvalidOperationException($"label name '{name}' is already taken.");
+            }
+        }
+
+        foreach (var (other, name) in normalized)
+            other.Name = name;
     }
 
     /// <summary>建立與改名時主動驗證名稱長度(SQLite 不強制 HasMaxLength,不能只靠資料庫)。</summary>

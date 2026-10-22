@@ -85,6 +85,24 @@ public class ConcurrencyTests
     }
 
     [Fact]
+    public async Task UpdateAsync的lambda自己載入別的標籤再搬移_那個標籤的戳記也輪換()
+    {
+        // 呼叫前不在追蹤器裡、lambda 自己查出來再搬的標籤,一樣是透過 store 的修改
+        using var db = new TestDb();
+        var p = await db.Store.CreateAsync("p");
+        var x = await db.Store.CreateAsync("x");
+        var stamp = x.ConcurrencyStamp;
+        db.Context.ChangeTracker.Clear();
+
+        await db.Store.UpdateAsync(p.Id, l => l.Children.Add(db.Context.Set<Label>().Single(y => y.Name == "x")));
+
+        using var check = db.CreateSecondContext();
+        var stored = await check.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == x.Id);
+        stored.ParentId.Should().Be(p.Id);
+        stored.ConcurrencyStamp.Should().NotBe(stamp);
+    }
+
+    [Fact]
     public async Task UpdateAsync的lambda搬移別的標籤時撞並發例外_那個標籤也重讀_重試就成功()
     {
         // 被搬的標籤呼叫前沒有未存修改,store 可以替消費端重讀;不重讀的話追蹤器留著舊戳記,重試永遠撞同一個衝突

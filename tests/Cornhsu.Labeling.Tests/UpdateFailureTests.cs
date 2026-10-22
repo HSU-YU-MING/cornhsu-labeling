@@ -208,6 +208,73 @@ public class UpdateFailureTests
 
     // ---- 還原前的偵測遇到身分衝突、自動建立標籤提交後才拋例外 ----
 
+    // 同 Id 的另一個實例:EF 10 偵測時撞身分衝突,衝突的那一筆會以 Detached 留在追蹤器,之後每次存檔都壞。
+    // store 要在自己偵測之前就認出來、擋下,剪掉之後再還原,context 才能繼續用
+
+    [Fact]
+    public async Task lambda把Parent設成同Id的另一個實例_沒有拋例外_store擋下_context仍可用()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c");
+        var clone = new Label { Id = parent.Id, Name = "p", CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
+
+        var act = () => db.Store.UpdateAsync(child.Id, l =>
+        {
+            l.Parent = clone;
+            l.Color = "#123456";
+        });
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage($"*{parent.Id}*");
+        child.Color.Should().BeNull();
+        child.Parent.Should().NotBeSameAs(clone);
+        await db.Store.CreateAsync("x");
+        await db.Context.SaveChangesAsync();
+        (await StoredAsync(db, child.Id)).ParentId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task lambda把同Id的另一個實例加進Children_沒有拋例外_store擋下_context仍可用()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c");
+        var clone = new Label { Id = child.Id, Name = "c", CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
+
+        var act = () => db.Store.UpdateAsync(parent.Id, l =>
+        {
+            l.Children.Add(clone);
+            l.Color = "#123456";
+        });
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage($"*{child.Id}*");
+        parent.Color.Should().BeNull();
+        parent.Children.Should().NotContain(clone);
+        await db.Store.CreateAsync("x");
+        await db.Context.SaveChangesAsync();
+        (await StoredAsync(db, child.Id)).ParentId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task lambda把Parent設成同Id的另一個實例又自己拋例外_原例外照拋_context仍可用()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c");
+        var clone = new Label { Id = parent.Id, Name = "p", CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
+
+        var act = () => db.Store.UpdateAsync(child.Id, l =>
+        {
+            l.Parent = clone;
+            throw new FormatException("消費端自己的錯");
+        });
+
+        await act.Should().ThrowAsync<FormatException>();
+        child.Parent.Should().NotBeSameAs(clone);
+        await db.Store.CreateAsync("x");
+        await db.Context.SaveChangesAsync();
+    }
+
     [Fact]
     public async Task lambda經Children放進同Id的另一個實例又自己拋例外_原例外照拋_context仍可用()
     {

@@ -113,6 +113,13 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             if (label.Id != labelId)
                 throw new InvalidOperationException("a label's Id must not be changed inside UpdateAsync.");
 
+            // 偵測變更之前先找「同 Id 的另一個實例」:讓 EF 偵測到它會撞身分衝突,而 EF Core 10 衝突的那一筆
+            // 會以 Detached 留在追蹤器,之後每次存檔都失敗。先擋下來,catch 那邊會把它剪掉再還原
+            if (FindConflictingInstances(cut: false) is [var conflict, ..])
+                throw new InvalidOperationException(
+                    $"the update put another Label instance with Id {conflict.Id} into a navigation; " +
+                    "use the instance this context already tracks.");
+
             // 導覽屬性(Parent、Children)的變更要等偵測變更才會寫回 ParentId;不先做,循環檢查看到的是舊值
             DetectLabelChanges();
 
@@ -157,7 +164,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             // (l.Parent = x、x.Children.Add(l))那時還沒寫回外鍵,還原碰不到,下一次存檔照樣落地。
             // 先把被改掉的主鍵放回去(否則偵測會因主鍵被改而拋),再盡力偵測一次,讓它們變成還原得掉的外鍵值
             snapshot.RestoreKeys();
-            CutConflictingInstances();
+            FindConflictingInstances(cut: true);
             DetectLabelChangesBestEffort();
             snapshot.Restore(detachUncapturedLabels: true);
             await ReloadConflictsAsync(ex, snapshot).ConfigureAwait(false);
@@ -375,12 +382,13 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     }
 
     /// <summary>
-    /// 還原前的準備:lambda 可能把「另一個實例、主鍵卻跟追蹤中的標籤相同」的 Label 放進 Parent 或 Children。
+    /// 沿著追蹤中標籤的 Parent / Children 找「另一個實例、主鍵卻跟追蹤中的標籤相同」的 Label。
     /// 偵測變更碰到它會拋身分衝突,而 EF Core 10 衝突的那一筆還會以 Detached 留在追蹤器裡,之後每一次存檔都失敗
-    /// (純 EF 也一樣,沒有公開 API 清得掉)。偵測之前先沿著 Parent / Children 把這種實例的連結剪掉,讓衝突根本不發生。
+    /// (純 EF 也一樣,沒有公開 API 清得掉)。所以 store 自己偵測之前先找:
+    /// lambda 跑完後只找(<paramref name="cut"/> 為 false),找到就擋下;還原前則把它們的連結剪掉,讓衝突根本不發生。
     /// 這種實例只可能是這次 lambda 放的:呼叫前那次偵測已經把消費端自己放進去的都追蹤起來了。
     /// </summary>
-    private void CutConflictingInstances()
+    private List<Label> FindConflictingInstances(bool cut)
     {
         var tracked = TrackedLabelEntries().Where(e => e.State != EntityState.Detached).Select(e => e.Entity).ToList();
         var trackedSet = new HashSet<Label>(tracked, ReferenceEqualityComparer.Instance);
@@ -390,6 +398,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         bool Conflicts(Label candidate)
             => !trackedSet.Contains(candidate) && byId.TryGetValue(candidate.Id, out var owner) && !ReferenceEquals(owner, candidate);
 
+        var found = new List<Label>();
         var visited = new HashSet<Label>(ReferenceEqualityComparer.Instance);
         var queue = new Queue<Label>(tracked);
         while (queue.Count > 0)
@@ -400,9 +409,15 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             if (label.Parent is { } parent)
             {
                 if (Conflicts(parent))
-                    label.Parent = null;   // 外鍵等一下照記下的值還原,EF 會順著把 Parent 修正回來
+                {
+                    found.Add(parent);
+                    if (cut)
+                        label.Parent = null;   // 外鍵等一下照記下的值還原,EF 會順著把 Parent 修正回來
+                }
                 else if (!trackedSet.Contains(parent))
+                {
                     queue.Enqueue(parent);
+                }
             }
 
             if (label.Children is not { Count: > 0 } children) continue;
@@ -414,6 +429,8 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                         queue.Enqueue(child);
                     continue;
                 }
+                found.Add(child);
+                if (!cut) continue;
                 try
                 {
                     children.Remove(child);
@@ -424,6 +441,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                 }
             }
         }
+        return found;
     }
 
     /// <summary>

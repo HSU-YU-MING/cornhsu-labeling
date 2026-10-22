@@ -23,6 +23,12 @@
   context 裡其他標籤還沒存的 `ParentId`(它們會在同一次存檔一起送出);lambda 經導覽屬性換了別的標籤的
   父標籤,那些標籤也一起檢查。沿用既有的循環例外與訊息,只多擋下本來就會成環的寫入。
   README 的「`UpdateAsync` 只依 `ParentId` 檢查循環」限制已移除。
+- **`UpdateAsync` 的 lambda 把「同 Id 的另一個 Label 實例」放進導覽屬性時,store 先擋下、context 不會壞掉**
+  (**minor:例外訊息改變**)。例如 `l.Parent = new Label { Id = 已追蹤的那個 Id, … }`。以前由 EF 偵測時拋身分衝突;
+  在 EF Core 10 上衝突的那一筆會以 Detached 留在追蹤器,之後每一次存檔都拋 `ArgumentOutOfRangeException`,
+  context 只能丟掉(v1.1.0 + EF 10 一樣)。現在 store 在自己偵測之前就找出來,拋 `InvalidOperationException`
+  (`the update put another Label instance with Id … into a navigation; use the instance this context already tracks.`),
+  把那條連結剪掉再還原,context 照常可用。例外型別不變,訊息從 EF 的換成 store 的,所以算 minor。
 - **`UpdateAsync` 的 lambda 經導覽屬性改了別的標籤的名稱,也照名稱規則驗證**(**minor:例外型別改變**)。
   以前只驗目標標籤,`UpdateAsync(c.Id, l => l.Parent!.Name = "   ")` 會把空白名稱寫進父標籤(v1.1.0 就有)。
   現在 lambda 改了名稱的其他標籤、以及經導覽屬性帶進來的新標籤,都照目標標籤的規則去空白、檢查空白、長度與唯一性;

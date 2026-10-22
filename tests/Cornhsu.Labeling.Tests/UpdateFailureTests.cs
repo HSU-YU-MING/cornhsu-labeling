@@ -149,6 +149,8 @@ public class UpdateFailureTests
 
         a.SortOrder.Should().Be(7, "還原的是這次呼叫做的修改,不是消費端自己的");
         a.ParentId.Should().BeNull();
+        db.Context.Entry(a).Property(l => l.SortOrder).IsModified.Should().BeTrue("消費端自己的修改仍標成待存");
+        db.Context.Entry(a).Property(l => l.ParentId).IsModified.Should().BeFalse("lambda 改的欄位連「已修改」旗標也還原");
         await db.Context.SaveChangesAsync();
         var stored = await StoredAsync(db, a.Id);
         stored.SortOrder.Should().Be(7);

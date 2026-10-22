@@ -731,6 +731,10 @@ public class WriteFailureTests
         var act = () => db.Store.UpdateAsync(label.Id, l => l.Color = "#FF0000");
         await act.Should().ThrowAsync<InvalidOperationException>();
 
+        // 目標呼叫前就是 Modified(消費端的修改),存檔前的記帳要靠「這次呼叫的對象」才認得它:
+        // 認不得的話會被當成沒提交而還原,又被標回待存
+        db.Context.Entry(label).State.Should().Be(EntityState.Unchanged);
+        db.Context.ChangeTracker.HasChanges().Should().BeFalse();
         await db.AddNoteAsync();
         var stored = (await StoredLabelsAsync(db)).Single();
         stored.Color.Should().Be("#FF0000");

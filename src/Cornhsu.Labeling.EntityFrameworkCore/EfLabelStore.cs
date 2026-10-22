@@ -96,9 +96,9 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         DetectLabelChanges();
         var snapshot = new TrackerSnapshot(_db);
         var before = new Dictionary<Label, (Guid? ParentId, string Name)>(ReferenceEqualityComparer.Instance);
-        foreach (var entry in _db.ChangeTracker.Entries<Label>())
+        foreach (var entry in TrackedLabelEntries())
         {
-            snapshot.Capture(entry);
+            snapshot.CaptureDetected(entry);   // 上一行剛偵測過
             before[entry.Entity] = (entry.Entity.ParentId, entry.Entity.Name);
         }
         snapshot.Own(label);
@@ -121,12 +121,14 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                 await NormalizeNameForSaveAsync(label, nameof(update), ct).ConfigureAwait(false);
 
             // lambda 經導覽屬性改了名稱、或帶進來的其他標籤,同一次存檔會一起寫出去:一樣驗,不能從這裡繞過
-            var tracked = _db.ChangeTracker.Entries<Label>().Select(e => e.Entity).ToList();
-            var renamedOthers = tracked
-                .Where(other => !ReferenceEquals(other, label)
-                    && !(before.TryGetValue(other, out var was)
-                        ? string.Equals(other.Name, was.Name, StringComparison.Ordinal)   // lambda 沒改它的名稱
-                        : _db.Entry(other).State == EntityState.Unchanged))               // lambda 只是載入(讀)進來的既有標籤
+            var trackedEntries = TrackedLabelEntries();
+            var tracked = trackedEntries.Select(e => e.Entity).ToList();
+            var renamedOthers = trackedEntries
+                .Where(e => !ReferenceEquals(e.Entity, label)
+                    && !(before.TryGetValue(e.Entity, out var was)
+                        ? string.Equals(e.Entity.Name, was.Name, StringComparison.Ordinal)   // lambda 沒改它的名稱
+                        : e.State == EntityState.Unchanged))                                 // lambda 只是載入(讀)進來的既有標籤
+                .Select(e => e.Entity)
                 .ToList();   // 沒改的不驗也不改寫:舊資料的名稱可能本來就不合現行規則,沒有人要寫它
             await ValidateOtherNamesAsync(label, renamedOthers, tracked, nameof(update), ct).ConfigureAwait(false);
 
@@ -139,7 +141,9 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             await EnsureNoCycleAsync(moved, ct).ConfigureAwait(false);
 
             label.ConcurrencyStamp = Guid.NewGuid();   // 輪換並發戳記
-            DetectLabelChanges();                      // 消費端關掉自動偵測變更時,SaveChanges 不會自己發現正規化後的名稱與新戳記
+            _db.Entry(label).DetectChanges();          // 新戳記與正規化後的名稱:存檔前的記帳(ArmForSave)要看到目標已是待存
+            if (!_db.ChangeTracker.AutoDetectChangesEnabled)
+                DetectLabelChanges();                  // 消費端關掉自動偵測時,SaveChanges 不會自己發現其他標籤正規化後的名稱
             snapshot.ArmForSave();
             await _db.SaveChangesAsync(ct).ConfigureAwait(false);
             return label;
@@ -345,8 +349,28 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     /// </summary>
     private void DetectLabelChanges()
     {
-        foreach (var entry in _db.ChangeTracker.Entries<Label>().ToList())
+        foreach (var entry in TrackedLabelEntries())
             entry.DetectChanges();
+    }
+
+    /// <summary>
+    /// 追蹤器裡的標籤。列舉時暫時關掉自動偵測:開著的話 ChangeTracker.Entries() 每次都會掃整個 context,
+    /// UpdateAsync 一次呼叫要列舉好幾次,context 追蹤大量非標籤實體時成本一路疊上去(第二輪審查量到 2 ms → 17 ms)。
+    /// 要偵測的只有標籤,由 <see cref="DetectLabelChanges"/> 明確偵測;其他實體照舊由存檔時的 SaveChanges 偵測一次。
+    /// </summary>
+    private List<EntityEntry<Label>> TrackedLabelEntries()
+    {
+        var tracker = _db.ChangeTracker;
+        var autoDetect = tracker.AutoDetectChangesEnabled;
+        tracker.AutoDetectChangesEnabled = false;
+        try
+        {
+            return tracker.Entries<Label>().ToList();
+        }
+        finally
+        {
+            tracker.AutoDetectChangesEnabled = autoDetect;
+        }
     }
 
     /// <summary>
@@ -398,7 +422,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             .Select(l => new { l.Id, l.ParentId })
             .ToListAsync(ct).ConfigureAwait(false);
         var parentOf = all.ToDictionary(x => x.Id, x => x.ParentId);
-        foreach (var entry in _db.ChangeTracker.Entries<Label>())
+        foreach (var entry in TrackedLabelEntries())
         {
             if (entry.State == EntityState.Added
                 || (entry.State == EntityState.Modified && entry.Property(l => l.ParentId).IsModified))

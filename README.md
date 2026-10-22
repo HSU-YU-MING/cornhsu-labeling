@@ -369,6 +369,13 @@ at this scale, so v1.0 does not merge queries. For list views use `GetLabelsOfMa
 than calling `GetLabelsOfAsync` in a loop — it is 5× faster on local SQLite, and on a database
 with network latency the difference is 49 round trips.
 
+`UpdateAsync` looks at every label the DbContext is tracking, twice per call: once before your lambda
+runs, so it can roll the changes back if the update is rejected or the save fails, and once after, so
+a parent changed through the `Parent` or `Children` navigations is checked for cycles. With 1,000
+tracked labels (and 10,000 other tracked entities) a call takes about 5–7 ms, against about 2.5 ms
+in 1.1.0. A context that tracks few labels — for example one that reads its label lists with
+`AsNoTracking()` — does not notice the difference.
+
 ## Limitations
 
 - **Entity keys may be `int`/`long`/`Guid`/`string` or any type with equality, and you may mix

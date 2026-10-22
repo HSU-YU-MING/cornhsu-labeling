@@ -20,7 +20,9 @@ internal sealed class TrackerSnapshot
     private readonly HashSet<object> _owned = new(ReferenceEqualityComparer.Instance);
     private List<(EntityEntry Entry, EntityState State)>? _pending;
 
-    private sealed record Item(EntityEntry Entry, EntityState State, PropertyValues? Values, HashSet<string>? Modified);
+    // FromOriginals:記下時剛偵測過而且是 Unchanged——呼叫前的值就是原值,不另外複製,還原時直接用原值
+    private sealed record Item(
+        EntityEntry Entry, EntityState State, PropertyValues? Values, HashSet<string>? Modified, bool FromOriginals = false);
 
     public TrackerSnapshot(DbContext db) => _db = db;
 
@@ -35,6 +37,22 @@ internal sealed class TrackerSnapshot
             entry.State,
             withValues ? entry.CurrentValues.Clone() : null,
             withValues ? new HashSet<string>(entry.Properties.Where(p => p.IsModified).Select(p => p.Metadata.Name)) : null));
+    }
+
+    /// <summary>
+    /// 同 <see cref="Capture"/>,給剛偵測過變更的項目用:Unchanged 的項目目前值就是原值,不必複製一份
+    /// (UpdateAsync 每次都要記下追蹤器裡所有標籤,複製是主要成本之一),還原時直接放回原值。
+    /// </summary>
+    public void CaptureDetected(EntityEntry entry)
+    {
+        if (entry.State != EntityState.Unchanged)
+        {
+            Capture(entry);
+            return;
+        }
+        if (!_captured.Add(entry.Entity)) return;
+        _capturedUnchanged.Add(entry.Entity);
+        _items.Add(new Item(entry, EntityState.Unchanged, null, null, FromOriginals: true));
     }
 
     /// <summary>記下 store 自己新加進追蹤器的實體;還原時 detach。</summary>
@@ -100,12 +118,13 @@ internal sealed class TrackerSnapshot
     {
         foreach (var item in _items)
         {
-            if (item.Values is null) continue;
+            if (item.Values is null && !item.FromOriginals) continue;
             var key = item.Entry.Metadata.FindPrimaryKey();
             if (key is null) continue;
             foreach (var property in key.Properties)
             {
-                var captured = item.Values[property];
+                // 主鍵在追蹤器裡從沒變過(EF 不准改),原值就是記下時的主鍵
+                var captured = item.Values is not null ? item.Values[property] : item.Entry.Property(property.Name).OriginalValue;
                 if (Equals(captured, item.Entry.Property(property.Name).CurrentValue)) continue;
                 if (property.PropertyInfo is { CanWrite: true } info)
                     info.SetValue(item.Entry.Entity, captured);
@@ -179,6 +198,8 @@ internal sealed class TrackerSnapshot
         // 外鍵改回去時,EF 會順著把 Parent / Children 這類導覽屬性一起修正回來
         if (item.Values is not null)
             entry.CurrentValues.SetValues(item.Values);
+        else if (item.FromOriginals)
+            entry.CurrentValues.SetValues(entry.OriginalValues);
 
         if (item.State == EntityState.Modified && item.Modified is not null)
         {

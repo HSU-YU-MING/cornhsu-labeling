@@ -342,8 +342,8 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     // ---- 內部 ----
 
     /// <summary>
-    /// 名稱正規化:去前後空白;空白字串視為無效(null)。大小寫不動。
-    /// 多數 API 拿正規化後的名稱到資料庫比對(依 collation);以名稱查詢的 API 例外,見 <see cref="ResolveLabelIdGroupsAsync"/>。
+    /// 名稱正規化:去前後空白;空白字串視為無效(null)。大小寫不動:
+    /// 每個 API 都拿正規化後的名稱到資料庫比對,大小寫語意依 collation。
     /// </summary>
     private static string? Normalize(string? name)
         => string.IsNullOrWhiteSpace(name) ? null : name!.Trim();
@@ -518,7 +518,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
     }
 
     /// <summary>
-    /// 把名稱集合解析成標籤 Id 群組:每個名稱一組,若 includeDescendants 則走訪階層收集子孫。
+    /// 把名稱集合解析成標籤 Id 群組:每個名稱一組(名稱在資料庫端比對),若 includeDescendants 則走訪階層收集子孫。
     /// 回傳 null 表示「結果必為空」:沒有任何有效名稱、Any 模式下全部名稱都不存在,
     /// 或 All 模式下任一名稱不存在(缺一個就不可能同時滿足)。
     /// </summary>
@@ -528,32 +528,36 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var names = NormalizeMany(labelNames);
         if (names.Count == 0) return null;
 
-        // 標籤數量通常很小,一次撈出 (Id, ParentId, Name) 在記憶體解析最簡單也最不容易寫錯
-        var all = await _db.Set<Label>()
-            .Select(l => new { l.Id, l.ParentId, l.Name })
-            .ToListAsync(ct).ConfigureAwait(false);
-
-        // 名稱在記憶體以 Ordinal 比對,不跟資料庫 collation 走(其他 API 在資料庫端比對)。
-        // 這是現行的對外行為,ILabelStore.FindByLabelsAsync 的 XML 與 README Limitations 都寫明了;
-        // 要不要改成跟 collation 走還沒拍板,CaseSensitivityTests 的「現行行為」測試釘著它。
-        var byName = all.ToDictionary(l => l.Name, l => l.Id);
-        var byParent = all.Where(l => l.ParentId != null).ToLookup(l => l.ParentId!.Value);
-
-        var groups = new List<IReadOnlyCollection<Guid>>();
+        // 名稱逐一交給資料庫比對,跟 FindAsync、貼標、撕標一樣依 collation 走。不能一次 WHERE Name IN (...)
+        // 撈回來再在記憶體對回輸入的名稱:記憶體不知道資料庫的 collation,對不回去。
+        // 名稱有唯一索引(依同一個 collation),每個名稱至多一筆
+        var roots = new List<Guid>(names.Count);
         foreach (var name in names)
         {
-            if (!byName.TryGetValue(name, out var rootId))
-            {
-                if (match == LabelMatch.All) return null;   // 缺一個名稱 → AND 不可能滿足
-                continue;                                    // OR:略過不存在的名稱
-            }
+            var rootId = await _db.Set<Label>()
+                .Where(l => l.Name == name)
+                .Select(l => (Guid?)l.Id)
+                .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+            if (rootId is { } id)
+                roots.Add(id);
+            else if (match == LabelMatch.All)
+                return null;   // 缺一個名稱 → AND 不可能滿足;OR 則略過不存在的名稱
+        }
+        if (roots.Count == 0) return null;
 
-            if (!includeDescendants)
-            {
-                groups.Add(new[] { rootId });
-                continue;
-            }
+        if (!includeDescendants)
+            return roots.Select(id => (IReadOnlyCollection<Guid>)new[] { id }).ToList();
 
+        // 子孫在記憶體沿 (Id, ParentId) 展開:標籤數量通常很小,各 provider 也沒有共通的遞迴查詢寫法
+        var edges = await _db.Set<Label>()
+            .Where(l => l.ParentId != null)
+            .Select(l => new { l.Id, ParentId = l.ParentId!.Value })
+            .ToListAsync(ct).ConfigureAwait(false);
+        var byParent = edges.ToLookup(e => e.ParentId, e => e.Id);
+
+        var groups = new List<IReadOnlyCollection<Guid>>(roots.Count);
+        foreach (var rootId in roots)
+        {
             var group = new List<Guid>();
             var seen = new HashSet<Guid>();
             var queue = new Queue<Guid>();
@@ -564,12 +568,12 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                 if (!seen.Add(id)) continue;   // 防禦資料異常造成的循環
                 group.Add(id);
                 foreach (var child in byParent[id])
-                    queue.Enqueue(child.Id);
+                    queue.Enqueue(child);
             }
             groups.Add(group);
         }
 
-        return groups.Count == 0 ? null : groups;
+        return groups;
     }
 
     /// <summary>

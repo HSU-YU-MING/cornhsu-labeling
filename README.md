@@ -398,13 +398,7 @@ in 1.1.0. A context that tracks few labels — for example one that reads its la
   (`"Life/Misc"`), which is v2 territory.
 - **Label names are trimmed of surrounding whitespace** (consistently, at every entry point).
   Case sensitivity is left to the database collation (SQLite is case-sensitive by default,
-  SQL Server is not), with one exception:
-  - The name-based queries (`FindByLabelAsync`, `FindByLabelsAsync`, `QueryByLabelAsync`,
-    `QueryByLabelsAsync`) match names with an ordinal, case-sensitive comparison regardless of
-    collation. On a case-insensitive collation, `AttachAsync(note, "Paper")` reuses an existing
-    `paper` label and `FindAsync("Paper")` finds it, but `FindByLabelAsync("Paper")` returns
-    nothing. Pass these queries the name exactly as stored (`FindAsync` follows the collation and
-    returns the label with its stored spelling).
+  SQL Server is not), for every method that takes a name.
 - **Get-or-create has a race**: two paths creating the same name concurrently will collide on the
   unique index, which is handled by re-reading and adopting the existing label. If the re-read
   shows it was not a same-name race, the original exception propagates.
@@ -419,7 +413,7 @@ in 1.1.0. A context that tracks few labels — for example one that reads its la
   the store leaves it alone.
 - **Tested against SQLite, SQL Server and PostgreSQL** (the same test suite, on every CI run, with
   EF Core 8; the EF Core 9 and 10 runs use SQLite only). Note that name case semantics vary with
-  collation, apart from the exception described above.
+  collation.
 - **`ILabelStore`'s write methods call your DbContext's `SaveChangesAsync`** — any other pending
   changes in that same context get committed along with them. That is the inherent trade-off of
   sharing a DbContext with the application; if you need isolation, call the store from a separate

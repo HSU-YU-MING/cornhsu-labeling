@@ -363,15 +363,10 @@ lambda 執行後一遍,經 `Parent` 或 `Children` 導覽屬性換的父標籤�
   需要這種結構時,請把限定詞放進名稱本身(如「生活·雜項」)。
   未來若支援每父層唯一,勢必伴隨路徑定址(`"生活/雜項"`)的 API 改版,屬 v2 範疇。
 - **標籤名稱會自動去除前後空白**(所有輸入入口一致);大小寫語意交由資料庫 collation 決定(SQLite 預設區分大小寫、SQL Server 預設不區分),
-  但有一個例外:
-  - 以名稱查詢的 API(`FindByLabelAsync`、`FindByLabelsAsync`、`QueryByLabelAsync`、`QueryByLabelsAsync`)
-    比對名稱時一律區分大小寫(Ordinal),不跟資料庫 collation 走。在不區分大小寫的 collation 上,
-    `AttachAsync(note, "Paper")` 會沿用既有的 `paper` 標籤、`FindAsync("Paper")` 也找得到它,
-    `FindByLabelAsync("Paper")` 卻什麼都查不到。呼叫這幾支查詢時,請傳入與儲存值完全相同的名稱
-    (`FindAsync` 依 collation 比對,回傳的標籤帶著儲存時的寫法)。
+  每個吃名稱的方法都一樣。
 - **get-or-create 標籤有競態**:兩條路徑同時建同名標籤會撞 unique index,以「重讀驗證後採用既有標籤」處理;若重讀發現不是同名競態,原例外照拋。
 - **並發修改保護**:`Label.ConcurrencyStamp` 是並發戳記(每次透過 store 修改就輪換,不依賴資料庫功能,所有 provider 行為一致)。兩邊同時修改同一個標籤時,後存檔的一方會得到 `DbUpdateConcurrencyException` 而不是默默蓋掉對方——請接住這個例外,重讀後重試或提示使用者。例外拋到你手上之前,store 已經把它正在寫的那個標籤從資料庫重讀,所以透過同一個 store(同一個 context)重讀拿到的就是資料庫的值,重試也才可能成功。這次重讀也會丟掉你自己對那個標籤做、還沒存的修改;衝突若出在你自己改過的別的東西上,store 不會動它。
-- **測試涵蓋 SQLite、SQL Server、PostgreSQL** 三個 provider(同一套測試,CI 每次都跑,EF Core 8;EF Core 9 / 10 那兩條只跑 SQLite)。注意名稱大小寫語意隨 collation 而異:SQLite 預設區分大小寫、SQL Server 預設不區分(例外見上)。
+- **測試涵蓋 SQLite、SQL Server、PostgreSQL** 三個 provider(同一套測試,CI 每次都跑,EF Core 8;EF Core 9 / 10 那兩條只跑 SQLite)。注意名稱大小寫語意隨 collation 而異:SQLite 預設區分大小寫、SQL Server 預設不區分。
 - **`ILabelStore` 的寫入方法會呼叫你的 DbContext 的 `SaveChangesAsync`**——如果同一個 context 裡有其他未存檔的變更,會被一起送出。這是「與應用共用 DbContext」模式的固有取捨;若要隔離,請用獨立的 DbContext scope 呼叫 store。寫入方法拋出例外時(更新被擋下或存檔失敗),會先把自己對 context 做的修改撤掉,它們不會在之後被誤存,context 也還能繼續用。你自己未存的變更原樣保留,只有一個例外:並發衝突之後,正在寫的那個標籤會被重讀(見上面的「並發修改保護」)。在你自己開的交易裡(`BeginTransaction` 或 `TransactionScope`),寫入失敗時就算 EF 已經接受了也會撤回,因為你可能接著 rollback:這次動到的標籤與連結會回到呼叫前的樣子,連原值與並發戳記一起,所以 rollback 之後透過同一個 store 重試就能成功。同一次存檔裡被 EF 接受的、你自己的修改不在撤回之列;context 裡帶著這種修改的話,rollback 之後請照 EF Core 的建議丟掉它。
 - **只支援 EF Core 8+**。相依樓地板是 8.0.11(8.0 系列中已修補已知弱點通報的版本),消費端用 EF Core 9/10 會自動 unify。
 - 測試請用 **SQLite in-memory,不要用 EF InMemory Provider**——後者不執行外鍵約束,測不到本套件的核心保證。

@@ -111,10 +111,14 @@
 - **README 與 `LabelRegistry.Labelable` 的 XML 寫明泛型實體一定要釘 `typeKey`**(patch,只改文件)。
   沒釘的話預設取 CLR 名稱,`Box<int>` 得到 ``Box`1``:連結表名帶反引號,而且所有 `Box<…>` 共用這個鍵,
   第二個建構型別註冊時拋 ``TypeKey 'Box`1' is already registered.``。推導規則與例外訊息都不變。
-- **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 的 XML 註解寫明名稱比對方式**
-  (patch,只改文件)。這四支在記憶體以 Ordinal(區分大小寫)比對名稱,不跟資料庫 collation 走;
-  `FindAsync`、貼標、撕標則在資料庫端比對。在不分大小寫的 collation 上(例如 SQL Server 預設),
-  `FindAsync("Paper")` 找得到的 `paper` 標籤,這四支查不到。以前只有 README 寫,IntelliSense 看不到。行為不變。
+- **`FindByLabelAsync`／`FindByLabelsAsync`／`QueryByLabelAsync`／`QueryByLabelsAsync` 改在資料庫端比對名稱,
+  跟其他吃名稱的方法一樣依 collation 走**(**破壞性:查詢結果會變**)。以前這四支把所有標籤撈回記憶體、
+  以 Ordinal(區分大小寫)比對名稱:在不分大小寫的 collation 上(SQL Server 預設、`NOCASE` 的 SQLite),
+  `AttachAsync(note, "Paper")` 沿用了既有的 `paper` 標籤、`FindAsync("Paper")` 也找得到它,
+  `FindByLabelAsync("Paper")` 卻靜默地回傳 0 筆,`LabelMatch.All` 下只要一個名稱大小寫不同整個結果就是空的。
+  現在每個名稱交給資料庫比對,`FindAsync` 找得到的標籤,這四支就查得到;子孫照舊沿階層展開。
+  區分大小寫的 collation(SQLite 與 PostgreSQL 的預設)上結果不變。README Limitations 的例外段與 XML 的
+  `<remarks>` 已移除。每次查詢改成每個名稱一次查詢(加上含子孫時一次讀階層),不再一次撈出全部標籤的名稱。
 
 ## [1.1.0] — 2026-08-07
 

@@ -224,6 +224,27 @@ public class UpdateFailureTests
         await db.Store.CreateAsync("x");
     }
 
+    [Fact]
+    public async Task lambda改了父標籤的Id_被擋下後父標籤的主鍵放回_context可用()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        var originalId = parent.Id;
+
+        var act = () => db.Store.UpdateAsync(child.Id, l =>
+        {
+            l.Parent!.Id = Guid.NewGuid();
+            l.Color = "#000000";
+        });
+        await act.Should().ThrowAsync<InvalidOperationException>();   // EF 偵測到主鍵被改
+
+        parent.Id.Should().Be(originalId);
+        child.Color.Should().BeNull();
+        db.Context.ChangeTracker.HasChanges().Should().BeFalse();
+        await db.Store.CreateAsync("x");
+    }
+
     // ---- 同一次存檔裡讓出、接手名稱:占用檢查要看得到,v1.1.0 能成功的寫法不能開始拋例外 ----
 
     [Fact]

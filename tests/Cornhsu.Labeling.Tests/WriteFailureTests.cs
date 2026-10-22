@@ -659,6 +659,101 @@ public class WriteFailureTests
         (await StoredLinkCountAsync(db)).Should().Be(2);
     }
 
+    // ---- 資料庫失敗的原因是消費端自己的修改:store 撤回自己的,消費端的留著 ----
+
+    [Fact]
+    public async Task UpdateAsync存檔時消費端自己的插入撞主鍵_標籤還原_消費端的修改留著()
+    {
+        using var db = new TestDb();
+        var label = await db.Store.CreateAsync("a");
+        var dup = new TestNote { Id = await InsertNoteElsewhereAsync(db.CreateSecondContext), Title = "撞主鍵" };
+        db.Context.Add(dup);
+
+        var act = () => db.Store.UpdateAsync(label.Id, l => { l.Color = "#FF0000"; l.Name = "b"; });
+        await act.Should().ThrowAsync<DbUpdateException>();
+
+        label.Color.Should().BeNull();
+        label.Name.Should().Be("a");
+        db.Context.Entry(label).State.Should().Be(EntityState.Unchanged);
+        db.Context.Entry(dup).State.Should().Be(EntityState.Added, "消費端自己的修改不動");
+        db.Context.Entry(dup).State = EntityState.Detached;
+        await db.Store.UpdateAsync(label.Id, l => l.SortOrder = 2);
+        (await StoredLabelsAsync(db)).Single().Name.Should().Be("a");
+    }
+
+    [Fact]
+    public async Task AttachAsync與DetachAsync存檔時消費端自己的插入撞主鍵_連結還原()
+    {
+        using var db = new TestDb();
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "留著");
+        await db.Store.CreateAsync("新的");
+        var dup = new TestNote { Id = await InsertNoteElsewhereAsync(db.CreateSecondContext), Title = "撞主鍵" };
+        db.Context.Add(dup);
+
+        await ((Func<Task>)(() => db.Store.AttachAsync(note, "新的"))).Should().ThrowAsync<DbUpdateException>();
+        await ((Func<Task>)(() => db.Store.DetachAsync(note, "留著"))).Should().ThrowAsync<DbUpdateException>();
+
+        db.Context.Entry(dup).State = EntityState.Detached;
+        db.Context.ChangeTracker.HasChanges().Should().BeFalse();
+        (await db.Store.GetLabelsOfAsync(note)).Select(l => l.Name).Should().BeEquivalentTo(new[] { "留著" });
+    }
+
+    [Fact]
+    public async Task cascade延後到存檔時_DeleteAsync在資料庫失敗_連結還原()
+    {
+        using var db = new TestDb();
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "x");
+        var label = (await db.Store.FindAsync("x"))!;
+        db.Context.ChangeTracker.CascadeDeleteTiming = Microsoft.EntityFrameworkCore.ChangeTracking.CascadeTiming.OnSaveChanges;
+        var dup = new TestNote { Id = await InsertNoteElsewhereAsync(db.CreateSecondContext), Title = "撞主鍵" };
+        db.Context.Add(dup);
+
+        var act = () => db.Store.DeleteAsync(label.Id);
+        await act.Should().ThrowAsync<DbUpdateException>();
+
+        db.Context.Entry(dup).State = EntityState.Detached;
+        db.Context.ChangeTracker.HasChanges().Should().BeFalse();
+        await db.Context.SaveChangesAsync();
+        (await db.Store.GetLabelsOfAsync(note)).Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task UpdateAsync目標上有消費端自己的未存修改_提交後才拋例外_已提交的值不會被之後的存檔蓋回去()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var label = await db.Store.CreateAsync("論文");
+        label.Icon = "mine";
+
+        after.Armed = true;
+        var act = () => db.Store.UpdateAsync(label.Id, l => l.Color = "#FF0000");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        await db.AddNoteAsync();
+        var stored = (await StoredLabelsAsync(db)).Single();
+        stored.Color.Should().Be("#FF0000");
+        stored.Icon.Should().Be("mine", "消費端自己的修改跟著那次存檔一起提交了");
+        db.Context.ChangeTracker.HasChanges().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RenameAsync目標上有消費端自己的未存修改_提交後才拋例外_已提交的名稱不會被之後的存檔蓋回去()
+    {
+        var after = new ThrowAfterSave();
+        using var db = new TestDb(null, after);
+        var label = await db.Store.CreateAsync("原名");
+        label.Icon = "mine";
+
+        after.Armed = true;
+        var act = () => db.Store.RenameAsync(label.Id, "新名");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        await db.AddNoteAsync();
+        (await StoredLabelsAsync(db)).Single().Name.Should().Be("新名");
+    }
+
     /// <summary>消費端規則:存檔前把第一條被標成刪除的連結改回 Unchanged(只動一條)。</summary>
     private sealed class KeepFirstDeletedLink : SaveChangesInterceptor
     {

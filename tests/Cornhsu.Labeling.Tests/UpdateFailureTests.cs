@@ -569,6 +569,55 @@ public class UpdateFailureTests
         stored.ConcurrencyStamp.Should().Be(label.ConcurrencyStamp);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task 消費端的自動偵測設定_成功與各種失敗路徑之後都維持原值(bool initial)
+    {
+        // store 內部列舉、還原時會暫時關掉自動偵測;每條路徑走完都要放回消費端原本的設定
+        var failure = new FailNextSave();
+        using var db = new TestDb(null, failure);
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        var tracker = db.Context.ChangeTracker;
+        tracker.AutoDetectChangesEnabled = initial;
+        var clone = new Label { Id = parent.Id, Name = "p", CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
+
+        var paths = new (string Name, Func<Task> Run)[]
+        {
+            ("成功", () => db.Store.UpdateAsync(child.Id, l => l.Color = "#111111")),
+            ("lambda 自己拋例外", () => db.Store.UpdateAsync(child.Id, l => { l.Color = "#222222"; throw new FormatException(); })),
+            ("目標名稱驗證失敗", () => db.Store.UpdateAsync(child.Id, l => l.Name = "   ")),
+            ("其他標籤名稱驗證失敗", () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = "   ")),
+            ("同 Id 的另一個實例", () => db.Store.UpdateAsync(child.Id, l => l.Parent = clone)),
+            ("存檔失敗", () => { failure.Armed = true; return db.Store.UpdateAsync(child.Id, l => l.SortOrder = 3); }),
+            ("刪除存檔失敗", () => { failure.Armed = true; return db.Store.DeleteAsync(child.Id); }),
+        };
+        foreach (var (name, run) in paths)
+        {
+            try { await run(); } catch (Exception) { /* 這裡只看設定有沒有放回去 */ }
+            tracker.AutoDetectChangesEnabled.Should().Be(initial, $"「{name}」之後");
+        }
+    }
+
+    /// <summary>Armed 時讓下一次存檔失敗(只失敗一次)。</summary>
+    private sealed class FailNextSave : Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor
+    {
+        public bool Armed { get; set; }
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> SavingChangesAsync(
+            Microsoft.EntityFrameworkCore.Diagnostics.DbContextEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (Armed)
+            {
+                Armed = false;
+                throw new DbUpdateException("模擬的寫入失敗");
+            }
+            return ValueTask.FromResult(result);
+        }
+    }
+
     [Fact]
     public async Task 自動偵測變更關掉時_經Parent導覽屬性成環_一樣擋下()
     {

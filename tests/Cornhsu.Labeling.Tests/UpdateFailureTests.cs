@@ -245,6 +245,19 @@ public class UpdateFailureTests
         await db.Store.CreateAsync("x");
     }
 
+    /// <summary>拒絕移除的集合:Remove 在動到內容之前就拋例外(IsReadOnly 仍是 false)。</summary>
+    private sealed class NoRemoveCollection : System.Collections.ObjectModel.Collection<Label>
+    {
+        public bool Armed { get; set; }
+
+        protected override void RemoveItem(int index)
+        {
+            if (Armed)
+                throw new NotSupportedException("這個集合不准移除");
+            base.RemoveItem(index);
+        }
+    }
+
     [Fact]
     public async Task 同Id的另一個實例剪不掉時_還原前的偵測撞身分衝突_原例外照拋_其他修改照常還原()
     {
@@ -252,7 +265,7 @@ public class UpdateFailureTests
         using var db = new TestDb();
         var parent = await db.Store.CreateAsync("p");
         var other = await db.Store.CreateAsync("o");
-        var children = new RefusingCollection();
+        var children = new NoRemoveCollection();
         parent.Children = children;
         var clone = new Label { Id = other.Id, Name = "o", CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
 

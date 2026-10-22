@@ -10,6 +10,13 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
 {
     private readonly Func<TEntity, string?>? _displayName;
 
+    /// <summary>
+    /// 一次查詢裡 Contains 放的實體主鍵數上限。EF Core 10 把 Contains 展開成一個值一個參數,
+    /// 超過資料庫的參數上限(SQLite 32,766、SQL Server 2,100)就拋例外;1,000 對所有 provider 都安全,
+    /// 每批一次往返,幾萬筆也只是幾十次。
+    /// </summary>
+    internal const int MaxIdsPerQuery = 1_000;
+
     public Type ClrType => typeof(TEntity);
     public Type KeyType => typeof(TKey);
     public string TypeKey { get; }
@@ -84,12 +91,17 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         var labelIds = labels.Select(l => l.Id).ToList();
         var links = db.Set<LabelLink<TEntity, TKey>>();
 
-        // 既有連結一次撈回,避免 N×M 次逐鍵查詢
-        var existing = await links.AsNoTracking()
-            .Where(l => labelIds.Contains(l.LabelId) && entityIds.Contains(l.EntityId))
-            .Select(l => new { l.LabelId, l.EntityId })
-            .ToListAsync(ct).ConfigureAwait(false);
-        var have = existing.Select(x => (x.LabelId, x.EntityId)).ToHashSet();
+        // 既有連結整批撈回(依實體分批,見 MaxIdsPerQuery),避免 N×M 次逐鍵查詢
+        var have = new HashSet<(Guid LabelId, TKey EntityId)>();
+        foreach (var batch in entityIds.Chunk(MaxIdsPerQuery))
+        {
+            var existing = await links.AsNoTracking()
+                .Where(l => labelIds.Contains(l.LabelId) && batch.Contains(l.EntityId))
+                .Select(l => new { l.LabelId, l.EntityId })
+                .ToListAsync(ct).ConfigureAwait(false);
+            foreach (var x in existing)
+                have.Add((x.LabelId, x.EntityId));
+        }
 
         var now = DateTimeOffset.UtcNow;
         foreach (var entity in typed)
@@ -138,18 +150,19 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         var ids = typed.Select(e => e.Id).Distinct().ToList();
 
         // 排序在資料庫做,和 GetLabelsAsync、GetAllAsync 一樣依 collation 排名稱;
-        // 在記憶體用 Ordinal 排的話,不分大小寫的 collation 上同一個實體兩種讀法的順序會不同
-        var pairs = await db.Set<LabelLink<TEntity, TKey>>()
-            .Where(l => ids.Contains(l.EntityId))
-            .Select(l => new { l.EntityId, l.Label })
-            .OrderBy(p => p.Label.SortOrder).ThenBy(p => p.Label.Name)
-            .ToListAsync(ct).ConfigureAwait(false);
-
-        var byId = pairs
-            .GroupBy(p => p.EntityId)   // GroupBy 保留群組內元素的原始順序,也就是資料庫排好的順序
-            .ToDictionary(
-                g => g.Key,
-                g => (IReadOnlyList<Label>)g.Select(p => p.Label).ToList());
+        // 在記憶體用 Ordinal 排的話,不分大小寫的 collation 上同一個實體兩種讀法的順序會不同。
+        // 依實體分批查(見 MaxIdsPerQuery):同一個實體的連結一定落在同一批,排序不受影響
+        var byId = new Dictionary<TKey, IReadOnlyList<Label>>();
+        foreach (var batch in ids.Chunk(MaxIdsPerQuery))
+        {
+            var pairs = await db.Set<LabelLink<TEntity, TKey>>()
+                .Where(l => batch.Contains(l.EntityId))
+                .Select(l => new { l.EntityId, l.Label })
+                .OrderBy(p => p.Label.SortOrder).ThenBy(p => p.Label.Name)
+                .ToListAsync(ct).ConfigureAwait(false);
+            foreach (var group in pairs.GroupBy(p => p.EntityId))   // GroupBy 保留群組內元素的原始順序,也就是資料庫排好的順序
+                byId[group.Key] = group.Select(p => p.Label).ToList();
+        }
 
         // 以實例(參考相等)為鍵:呼叫端傳什麼就用什麼當 key,每個實體都保證有項目
         var result = new Dictionary<ILabelable, IReadOnlyList<Label>>(ReferenceEqualityComparer.Instance);

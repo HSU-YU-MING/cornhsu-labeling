@@ -71,6 +71,10 @@
   那次存檔還一起送出了 context 裡其他未存的變更。現在先查完全部名稱、驗證完要建立的名稱,才開始寫入;
   參數不合法就什麼都不建立、不存檔。`AutoCreateLabels = false` 的行為不變(缺的名稱照舊一次列出,不做長度檢查)。
   例外型別與訊息不變。
+- **`AttachManyAsync`／`GetLabelsOfManyAsync` 一次給幾萬個實體時分批查詢**(patch)。EF Core 10 把 `Contains`
+  展開成一個值一個參數,超過資料庫的參數上限就拋例外:EF 10 + SQLite 上 4 萬個實體拋 `too many SQL variables`
+  (SQLite 上限 32,766;SQL Server 是 2,100)。現在依實體每 1,000 個查一批,對所有 provider 都在上限之內;
+  結果、排序與冪等都不變,4 萬條連結的耗時跟一次查差不多(本機 EF 8 約 2.0 s、EF 10 約 2.4 s)。這是 1.1.0 + EF 10 就有的問題。
 - **`GetLabelsOfManyAsync` 的排序改在資料庫做,與 `GetLabelsOfAsync`／`GetAllAsync` 一致**(patch)。
   以前名稱在記憶體用 Ordinal 排,不分大小寫的 collation 上 `SortOrder` 相同的標籤,同一個實體用兩種讀法
   會排得不一樣(`B-upper, a-lower` 對 `a-lower, B-upper`)。現在批次讀的順序一律跟資料庫的 collation 走:

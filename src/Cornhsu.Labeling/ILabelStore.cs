@@ -34,10 +34,12 @@ public interface ILabelStore
     /// are persisted; changing the parent — through <see cref="Label.ParentId"/> or through the
     /// <see cref="Label.Parent"/> / <see cref="Label.Children"/> navigations — is checked for cycles.
     /// The update may change only this label, apart from moving other labels through those navigations:
-    /// changing any other field of another label, adding a label or deleting one throws
-    /// <see cref="InvalidOperationException"/>.
+    /// changing any other field of another label, adding a label, deleting or detaching a label (this one included),
+    /// changing another label's tracking state, or adding or removing a link throws <see cref="InvalidOperationException"/>.
+    /// Changes the update makes to your own entities are saved along with it.
     /// If the update is rejected or cannot be saved, the changes made inside <paramref name="update"/>
-    /// are rolled back, so a later save of the same context does not persist them.
+    /// are rolled back — your own entities included, unless the context has automatic change detection turned off —
+    /// so a later save of the same context does not persist them.
     /// </summary>
     /// <param name="labelId">Label id.</param>
     /// <param name="update">The mutation to apply, e.g. <c>l =&gt; l.Color = "#FF5722"</c>.</param>

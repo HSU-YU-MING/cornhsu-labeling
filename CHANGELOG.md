@@ -21,17 +21,22 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
    - 舊:依賴「大小寫要完全一樣才查得到」。新:把 `Label.Name` 設成區分大小寫的 collation
      (`b.Entity<Label>().Property(l => l.Name).UseCollation("…")`,在 `ApplyLabelModel` 之後),
      名稱的唯一性、`FindAsync`、貼標與這四支查詢會一起改成區分大小寫——套件不再有只對其中幾支成立的比對規則。
-2. **`UpdateAsync` 的 lambda 只能改目標標籤本身;別的標籤只能經 `Parent`／`Children` 搬移。** 改了別的標籤
-   `ParentId` 以外的欄位、帶進新標籤、刪掉別的標籤,1.x 照樣存檔(或在資料庫才拋 `DbUpdateException`),
-   現在拋 `InvalidOperationException`(`update may only change the label being updated (and move other labels through Parent or Children), but it …`),
-   什麼都不存。
+2. **`UpdateAsync` 的 lambda 只能改目標標籤本身;別的標籤只能經 `Parent`／`Children` 搬移。** 下面這些 1.x 會照樣存檔
+   (或在資料庫才拋 `DbUpdateException`,或靜默地丟掉),現在拋 `InvalidOperationException`
+   (`update may only change the label being updated (and move other labels through Parent or Children), but it …`),
+   什麼都不存:改了別的標籤 `ParentId` 以外的欄位、帶進新標籤、刪掉或移出(Detach)任何標籤——包括正在更新的這一個,
+   以及你新加還沒存的標籤(EF 對它 `Remove` 就是靜默 detach)——、改了別的標籤的追蹤狀態(例如把你的未存修改設回
+   `Unchanged`)、刪掉或新增連結。
    - 舊:`UpdateAsync(child.Id, l => { l.Name = "tmp"; l.Parent!.Name = "a"; })`。
      新:`await store.RenameAsync(child.Id, "tmp"); await store.RenameAsync(parentId, "a");`
    - 舊:`UpdateAsync(child.Id, l => l.Parent!.Color = "#000000")`。新:`UpdateAsync(parentId, l => l.Color = "#000000")`。
    - 舊:`UpdateAsync(p.Id, l => l.Children.Add(new Label { … }))`。新:`CreateAsync(name, parentId: p.Id)`。
-   - 舊:lambda 裡 `db.Remove(other)`。新:`DeleteAsync(other.Id)`。
+   - 舊:lambda 裡 `db.Remove(other)` 或 `db.Remove(l)`。新:`DeleteAsync(other.Id)`／`DeleteAsync(l.Id)`。
+   - 舊:lambda 裡 `db.Remove(link)` 或 `db.Add(new LabelLink<…>{ … })`。新:`DetachAsync`／`AttachAsync`。
+   - 舊:lambda 裡 `db.Entry(x).State = …`(Detached、Unchanged 等)。新:在呼叫之外自己處理追蹤狀態。
    - 照常可用:`l.Parent = x`、`l.Children.Add(既有的標籤)`、經導覽屬性讓別的標籤換父標籤(照樣檢查循環),
-     以及你在呼叫前自己對別的標籤做、還沒存的修改。
+     你在呼叫前自己對別的標籤做、還沒存的修改,以及 lambda 對你自己的實體(標籤與連結以外)做的修改——
+     它們跟著這次更新一起存;更新被拒絕時一起撤掉(context 關掉自動偵測變更時,store 不看你的實體,也就不撤)。
 3. **對外可見的例外型別與訊息**(只影響接住或斷言這些例外的程式碼):
    - `AddLabeling(configure: null)`、`ApplyLabelModel(null, …)`／`ApplyLabelModel(b, null)`:
      `NullReferenceException` → `ArgumentNullException`(`ParamName` 為 `configure`、`b`、`registry`)。
@@ -176,8 +181,10 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   lambda 拿到的是追蹤中的實體,經導覽屬性碰得到別的標籤。以前改了什麼都照樣存檔:`l.Parent!.Name = "   "`
   把空白名稱寫進父標籤、別的標籤被改了欄位卻不輪換並發戳記(兩邊同時改,後存的一方不會拿到並發例外)、
   經導覽屬性帶進的新標籤沒有建立時間與戳記(主鍵已設的還會被當成既有的標籤下 UPDATE、影響 0 列而拋並發例外)。
-  現在 lambda 執行完先比對它前後的差異:改了別的標籤 `ParentId` 以外的欄位、帶進新標籤、刪掉別的標籤,
-  都拋 `InvalidOperationException` 並照既有機制還原,什麼都不存。lambda 執行期間 store 會暫時把
+  現在 lambda 執行完先比對它前後的差異:改了別的標籤 `ParentId` 以外的欄位、帶進新標籤、刪掉或移出任何標籤
+  (包括目標自己,與你新加還沒存的標籤)、改了別的標籤的追蹤狀態、刪掉或新增連結,都拋 `InvalidOperationException`
+  並照既有機制還原,什麼都不存;還原的範圍包括 lambda 對你自己的實體做的修改與新加的實體(開著自動偵測時)。
+  你自己的實體不歸 store 管,lambda 裡改了不擋,照常隨這次存檔送出——跟呼叫前改的一樣。lambda 執行期間 store 會暫時把
   `ChangeTracker.CascadeDeleteTiming` 設成 `OnSaveChanges`(結束後放回原值),所以被拒絕的刪除不會留下 EF 當下
   就串聯標成刪除的連結。改了別的標籤的 `Id` 也一樣擋下,
   訊息與改目標 `Id` 相同。你在呼叫前自己做、還沒存的修改不受限制,照舊隨這次存檔送出;
@@ -190,10 +197,10 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   缺表之類的資料庫錯誤冒出來,或者完全沒有錯誤訊息。現在封存後註冊型別與設定三個屬性都拋例外,錯誤出現在寫錯的那一行;
   `AutoCreateLabels` 不影響 model,一併鎖住是為了讓「封存後整個不可變」沒有例外。
   參數檢查失敗(`context` 或 `registry` 為 null)時不封存。
-- **`UpdateAsync` 每次呼叫多了掃過追蹤中標籤的成本**(行為不變)。還原與循環檢查要求在 lambda 前後各看一遍
-  追蹤中的標籤;追蹤 1,000 個標籤、另加 10,000 個其他實體時,每次呼叫約 4–6 ms(1.1.0 約 2.5 ms)。
-  內部列舉時暫時關掉自動偵測、只偵測標籤,不再每次都掃整個 context(修正前同樣的量測是 17–20 ms);
-  README Performance 寫了這件事。
+- **`UpdateAsync` 每次呼叫多了掃過追蹤器的成本**(行為不變)。還原、「只能改目標」的檢查與循環檢查要求在
+  lambda 前後各看一遍追蹤中的項目(開著自動偵測時,lambda 之前先整個偵測一次);追蹤 1,000 個標籤、
+  另加 10,000 個其他實體時,每次呼叫約 5–7 ms,被拒絕的約 8–12 ms(1.1.0 約 2.5 ms)。內部列舉時暫時關掉自動偵測、
+  不為一萬個實體建一萬筆的集合;README Performance 寫了這件事。
 - **`ILabelStore.AttachManyAsync` 的 XML 註解更正**(只改文件)。以前寫 "everything is saved in a single
   SaveChanges",需要自動建立標籤時不成立:每個要建立的標籤各自先存一次,連結再一起存一次,整個操作不是原子的。
   IntelliSense 現在照實寫;README 早已改正。

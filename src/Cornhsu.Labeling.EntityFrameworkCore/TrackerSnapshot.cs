@@ -20,6 +20,11 @@ internal sealed class TrackerSnapshot
     private readonly HashSet<object> _owned = new(ReferenceEqualityComparer.Instance);
     private List<(EntityEntry Entry, EntityState State)>? _pending;
     private readonly Dictionary<object, PropertyValues> _preSaveOriginals = new(ReferenceEqualityComparer.Instance);
+    private const int BystanderChunkSize = 4096;   // 32 KB 一段,不進 Large Object Heap
+    private readonly List<EntityEntry[]> _bystanderChunks = new();
+    private int _lastChunkCount;
+    private HashSet<object>? _bystanderSet;
+    private bool _revertBystanderValues;
 
     // FromOriginals:記下時剛偵測過而且是 Unchanged——呼叫前的值就是原值,不另外複製,還原時直接用原值
     private sealed record Item(
@@ -56,6 +61,40 @@ internal sealed class TrackerSnapshot
         _items.Add(new Item(entry, EntityState.Unchanged, null, null, FromOriginals: true));
     }
 
+    /// <summary>
+    /// 記下一個呼叫前是 Unchanged、store 不打算動的項目(UpdateAsync 裡消費端自己的實體)。比 <see cref="CaptureDetected"/> 輕:
+    /// 不進還原清單,只在還原時檢查——狀態被改了就放回 Unchanged;<paramref name="revertValues"/> 時(呼叫前已整個偵測過,
+    /// 所以這時的值就是原值)值被改了也放回原值。追蹤一萬個實體時,逐一做完整記錄(加進幾個 HashSet)是 UpdateAsync 的主要成本,
+    /// 而且一萬筆的 HashSet／List 會落進 Large Object Heap、拖慢之後的每一步;所以這裡只存進固定大小的分段陣列,
+    /// 查詢用的集合等到還原或重讀(失敗路徑)才建。呼叫端要保證同一個項目只給一次。
+    /// </summary>
+    public void Bystander(EntityEntry entry, bool revertValues)
+    {
+        if (_bystanderChunks.Count == 0 || _lastChunkCount == BystanderChunkSize)
+        {
+            _bystanderChunks.Add(new EntityEntry[BystanderChunkSize]);
+            _lastChunkCount = 0;
+        }
+        _bystanderChunks[^1][_lastChunkCount++] = entry;
+        _revertBystanderValues = revertValues;
+    }
+
+    private IEnumerable<EntityEntry> Bystanders()
+    {
+        for (var i = 0; i < _bystanderChunks.Count; i++)
+        {
+            var chunk = _bystanderChunks[i];
+            var count = i == _bystanderChunks.Count - 1 ? _lastChunkCount : BystanderChunkSize;
+            for (var j = 0; j < count; j++)
+                yield return chunk[j];
+        }
+    }
+
+    private bool IsBystander(object entity)
+        => _bystanderChunks.Count > 0
+           && (_bystanderSet ??= new HashSet<object>(Bystanders().Select(e => e.Entity), ReferenceEqualityComparer.Instance))
+               .Contains(entity);
+
     /// <summary>記下 store 自己新加進追蹤器的實體;還原時 detach。</summary>
     public void Added(object entity)
     {
@@ -71,7 +110,7 @@ internal sealed class TrackerSnapshot
     /// 或記下時沒有未存變更(Unchanged)的才行。消費端自己改過、還沒存的項目不重讀,免得替他丟掉修改。
     /// </summary>
     public bool MayReload(object entity)
-        => _owned.Contains(entity) || _addedSet.Contains(entity) || _capturedUnchanged.Contains(entity);
+        => _owned.Contains(entity) || _addedSet.Contains(entity) || _capturedUnchanged.Contains(entity) || IsBystander(entity);
 
     /// <summary>
     /// 存檔前呼叫:記下 store 這次要寫出去的項目(新加的、這次呼叫的對象、狀態被這次呼叫改掉的)目前的待存狀態。
@@ -142,11 +181,11 @@ internal sealed class TrackerSnapshot
     }
 
     /// <summary>
-    /// 還原:store 新加的實體 detach;<paramref name="detachUncapturedLabels"/> 時,沒被記下的標籤
-    /// (UpdateAsync 的 lambda 經導覽屬性帶進追蹤器的新標籤)也 detach,並從其他標籤的 Children 裡拿掉;
-    /// 記下的項目依記錄順序放回當時的值、已修改欄位與狀態。
+    /// 還原:store 新加的實體 detach;<paramref name="detachUncaptured"/> 時,沒被記下的項目
+    /// (UpdateAsync 記下了呼叫前追蹤器裡的每一項,沒被記下的就是 lambda 帶進來的:新加的、載入的)也 detach,
+    /// 其中的標籤並從其他標籤的 Children 裡拿掉;記下的項目依記錄順序放回當時的值、已修改欄位與狀態。
     /// </summary>
-    public void Restore(bool detachUncapturedLabels = false)
+    public void Restore(bool detachUncaptured = false)
     {
         var tracker = _db.ChangeTracker;
         var autoDetect = tracker.AutoDetectChangesEnabled;
@@ -161,11 +200,12 @@ internal sealed class TrackerSnapshot
             }
 
             var strays = new List<Label>();
-            if (detachUncapturedLabels)
+            if (detachUncaptured)
             {
-                foreach (var entry in tracker.Entries<Label>().Where(e => !_captured.Contains(e.Entity)).ToList())
+                foreach (var entry in tracker.Entries().Where(e => !_captured.Contains(e.Entity) && !IsBystander(e.Entity)).ToList())
                 {
-                    strays.Add(entry.Entity);
+                    if (entry.Entity is Label stray)
+                        strays.Add(stray);
                     entry.State = EntityState.Detached;
                 }
             }
@@ -181,6 +221,18 @@ internal sealed class TrackerSnapshot
                 catch (Exception)
                 {
                     // 盡力而為:這一項停在目前的樣子
+                }
+            }
+
+            foreach (var entry in Bystanders())
+            {
+                try
+                {
+                    RestoreBystander(entry, _revertBystanderValues);
+                }
+                catch (Exception)
+                {
+                    // 盡力而為,理由同上
                 }
             }
 
@@ -226,6 +278,28 @@ internal sealed class TrackerSnapshot
         {
             entry.State = item.State;
         }
+    }
+
+    /// <summary>放回呼叫前的 Unchanged:被移出追蹤器的重新追蹤、被改了狀態的改回;<paramref name="revertValues"/> 時值也放回原值。</summary>
+    private static void RestoreBystander(EntityEntry entry, bool revertValues)
+    {
+        if (entry.State == EntityState.Detached)
+        {
+            entry.State = EntityState.Unchanged;   // detach 之後 EF 已經沒有原值,只能照目前的值重新追蹤
+            return;
+        }
+        if (entry.State != EntityState.Unchanged)
+        {
+            if (revertValues)
+                entry.CurrentValues.SetValues(entry.OriginalValues);
+            entry.State = EntityState.Unchanged;
+            return;
+        }
+        if (!revertValues) return;
+        entry.DetectChanges();   // 只偵測這一項:值沒被改就什麼都不做
+        if (entry.State == EntityState.Unchanged) return;
+        entry.CurrentValues.SetValues(entry.OriginalValues);
+        entry.State = EntityState.Unchanged;
     }
 
     private static void RemoveFromChildren(ChangeTracker tracker, HashSet<Label> strays)

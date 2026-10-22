@@ -189,8 +189,10 @@ await store.DeleteAsync(review.Id);    // 各型別的連結由 cascade delete �
 ```
 
 `UpdateAsync` 只改你傳入的那個標籤。lambda 裡可以經 `Parent` 或 `Children` 搬移別的標籤;
-改別的標籤的欄位、帶進新標籤或刪掉別的標籤,會拋 `InvalidOperationException`、什麼都不存——
-請改對那個標籤呼叫 `UpdateAsync`、`RenameAsync`、`CreateAsync` 或 `DeleteAsync`。
+改別的標籤的欄位、帶進新標籤、刪掉或移出任何標籤(包括正在更新的這一個)、改別的標籤的追蹤狀態、新增或刪掉連結,
+都會拋 `InvalidOperationException`、什麼都不存——請改用 `UpdateAsync`、`RenameAsync`、`CreateAsync`、`DeleteAsync`、
+`AttachAsync` 或 `DetachAsync`。lambda 對你自己的實體做的修改會跟著這次更新一起存;更新被拒絕時,它們也一起撤掉
+(context 關掉自動偵測變更時例外:那時 store 完全不看你的實體)。
 
 ## 不用 DI 容器
 
@@ -357,10 +359,11 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 以名稱查詢的 API 每個名稱各自下一次小查詢(含子孫時再讀一次階層),比對規則交給資料庫的 collation。
 1.1.0 是一次撈出全部標籤、在記憶體比對名稱;benchmark 上兩者的差異在量測雜訊之內。
 
-`UpdateAsync` 每次呼叫會把 DbContext 追蹤中的標籤看過兩遍:lambda 執行前一遍,更新被擋下或存檔失敗時才還原得回去;
-lambda 執行後一遍,經 `Parent` 或 `Children` 導覽屬性換的父標籤才檢查得到循環。追蹤 1,000 個標籤
-(另加 10,000 個其他實體)時,每次呼叫約 4–6 ms,1.1.0 約 2.5 ms。追蹤的標籤不多的 context
-(例如讀標籤清單時用 `AsNoTracking()`)感覺不到差別。
+`UpdateAsync` 每次呼叫會把 DbContext 追蹤中的所有項目看過兩遍:lambda 執行前一遍(開著自動偵測時先整個偵測一次,
+再記下每一項的狀態),更新被擋下或存檔失敗時才還原得回去;lambda 執行後一遍,才分得出 lambda 改了什麼,
+經 `Parent` 或 `Children` 導覽屬性換的父標籤也才檢查得到循環。追蹤 1,000 個標籤、另加 10,000 個其他實體時,
+每次呼叫約 5–7 ms(被拒絕的約 8–12 ms),1.1.0 約 2.5 ms。追蹤的實體不多的 context
+(例如讀清單時用 `AsNoTracking()`)感覺不到差別。
 
 ## 限制
 

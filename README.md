@@ -198,9 +198,13 @@ await store.DeleteAsync(review.Id);    // links on every type are removed by cas
 ```
 
 `UpdateAsync` changes only the label you pass it. Inside the lambda you may also move other labels
-(through `Parent` or `Children`); changing another label's fields, adding a label or deleting one
-throws `InvalidOperationException` and saves nothing — call `UpdateAsync`, `RenameAsync`,
-`CreateAsync` or `DeleteAsync` for that label instead.
+(through `Parent` or `Children`); changing another label's fields, adding a label, deleting or
+detaching a label (the one being updated included), changing another label's tracking state, or
+adding or removing a link throws `InvalidOperationException` and saves nothing — call `UpdateAsync`,
+`RenameAsync`, `CreateAsync`, `DeleteAsync`, `AttachAsync` or `DetachAsync` instead. Changes the
+lambda makes to your own entities are saved along with the update; when the update is rejected they
+are rolled back with everything else (unless the context has automatic change detection turned off,
+in which case the store does not look at your entities at all).
 
 ## Without a DI container
 
@@ -384,12 +388,13 @@ hierarchy when descendants are included), so the database's collation decides wh
 1.1.0, which read every label in one query and matched names in memory, the benchmark shows no
 difference beyond noise.
 
-`UpdateAsync` looks at every label the DbContext is tracking, twice per call: once before your lambda
-runs, so it can roll the changes back if the update is rejected or the save fails, and once after, so
-a parent changed through the `Parent` or `Children` navigations is checked for cycles. With 1,000
-tracked labels (and 10,000 other tracked entities) a call takes about 4–6 ms, against about 2.5 ms
-in 1.1.0. A context that tracks few labels — for example one that reads its label lists with
-`AsNoTracking()` — does not notice the difference.
+`UpdateAsync` looks at everything the DbContext is tracking, twice per call: once before your lambda
+runs (a full change detection, when it is on, plus a note of each entry's state), so it can roll the
+changes back if the update is rejected or the save fails, and once after, so it can tell what the
+lambda changed and check a parent changed through the `Parent` or `Children` navigations for cycles.
+With 1,000 tracked labels and 10,000 other tracked entities a call takes about 5–7 ms (a rejected
+one about 8–12 ms), against about 2.5 ms in 1.1.0. A context that tracks few entities — for example
+one that reads its lists with `AsNoTracking()` — does not notice the difference.
 
 ## Limitations
 

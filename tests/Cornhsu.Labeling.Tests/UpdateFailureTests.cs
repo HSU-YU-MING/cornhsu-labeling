@@ -272,6 +272,154 @@ public class UpdateFailureTests
         stored.Color.Should().BeNull();
     }
 
+    // ---- 「只能改目標」的邊角:刪目標、移出追蹤器、改追蹤狀態、動連結、動你自己的實體 ----
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task lambda刪掉或移出目標自己_拒絕_要刪請用DeleteAsync(bool detach)
+    {
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+
+        var act = () => db.Store.UpdateAsync(target.Id, l =>
+        {
+            if (detach) db.Context.Entry(l).State = EntityState.Detached;
+            else db.Context.Remove(l);
+        });
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage(detach
+            ? "update may only change the label being updated*but it removed the label being updated from the context."
+            : "update may only change the label being updated*but it deleted the label being updated. Use DeleteAsync instead.");
+        db.Context.Entry(target).State.Should().Be(EntityState.Unchanged);
+        await db.Context.SaveChangesAsync();
+        (await StoredAsync(db, target.Id)).Name.Should().Be("t");
+    }
+
+    [Fact]
+    public async Task lambda把消費端新加還沒存的標籤刪掉_拒絕_那個標籤照樣待新增()
+    {
+        // 對 Added 的實體 Remove 是直接 detach:不擋的話,消費端的新增就靜默消失
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        var pending = new Label { Id = Guid.NewGuid(), Name = "pre", CreatedAt = DateTimeOffset.UtcNow, ConcurrencyStamp = Guid.NewGuid() };
+        db.Context.Add(pending);
+
+        var act = () => db.Store.UpdateAsync(target.Id, l => db.Context.Remove(pending));
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*but it removed label 'pre' (Id: *) from the context.");
+        db.Context.Entry(pending).State.Should().Be(EntityState.Added);
+        await db.Context.SaveChangesAsync();
+        (await StoredAsync(db, pending.Id)).Name.Should().Be("pre");
+    }
+
+    [Fact]
+    public async Task lambda把別的標籤移出追蹤器_拒絕()
+    {
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        var other = await db.Store.CreateAsync("o");
+
+        var act = () => db.Store.UpdateAsync(target.Id, l => db.Context.Entry(other).State = EntityState.Detached);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage($"*but it removed label 'o' (Id: {other.Id}) from the context.");
+        db.Context.Entry(other).State.Should().Be(EntityState.Unchanged);
+    }
+
+    [Fact]
+    public async Task lambda把別的標籤設回Unchanged丟掉消費端的未存修改_拒絕_修改原樣保留()
+    {
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        var other = await db.Store.CreateAsync("o");
+        other.Color = "#111111";   // 消費端自己的未存修改
+
+        var act = () => db.Store.UpdateAsync(target.Id, l => db.Context.Entry(other).State = EntityState.Unchanged);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"*but it changed the tracking state of label 'o' (Id: {other.Id}) from Modified to Unchanged.");
+        db.Context.Entry(other).State.Should().Be(EntityState.Modified);
+        await db.Context.SaveChangesAsync();
+        (await StoredAsync(db, other.Id)).Color.Should().Be("#111111");
+    }
+
+    [Fact]
+    public async Task lambda刪掉或新增連結_拒絕_連結原樣()
+    {
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "t");
+        var other = await db.AddNoteAsync("other");
+        var links = db.Context.Set<Cornhsu.Labeling.EntityFrameworkCore.LabelLink<TestNote, Guid>>();
+
+        var remove = () => db.Store.UpdateAsync(target.Id, l => links.Remove(links.Local.Single()));
+        var add = () => db.Store.UpdateAsync(target.Id, l => links.Add(new Cornhsu.Labeling.EntityFrameworkCore.LabelLink<TestNote, Guid>
+        {
+            LabelId = target.Id, EntityId = other.Id, AttachedAt = DateTimeOffset.UtcNow,
+        }));
+
+        await remove.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"update may only change the label being updated*but it removed or changed a link of label {target.Id} (entity {note.Id}). Use DetachAsync instead.");
+        await add.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"*but it added a link of label {target.Id} (entity {other.Id}). Use AttachAsync instead.");
+        db.Context.ChangeTracker.HasChanges().Should().BeFalse();
+        await db.Context.SaveChangesAsync();
+        (await db.Store.FindByLabelAsync("t")).Select(h => h.EntityId).Should().Equal(note.Id);
+    }
+
+    [Fact]
+    public async Task lambda改了你自己的實體_被拒絕時一起還原_成功時照常存檔()
+    {
+        // 你自己的實體不歸 store 管:lambda 裡改了照常隨這次存檔送出(跟呼叫前改的一樣);
+        // 但這次呼叫被拒絕時,lambda 做的修改要整批撤掉,包括對你自己實體的修改與新加的實體
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        var note = await db.AddNoteAsync("原標題");
+        var extra = new TestNote { Id = Guid.NewGuid(), Title = "lambda 新加的" };
+
+        var rejected = () => db.Store.UpdateAsync(child.Id, l =>
+        {
+            note.Title = "改過的標題";
+            db.Context.Add(extra);
+            l.Parent!.Name = "X";   // 被拒絕
+        });
+        await rejected.Should().ThrowAsync<InvalidOperationException>();
+
+        note.Title.Should().Be("原標題");
+        db.Context.Entry(extra).State.Should().Be(EntityState.Detached);
+        await db.Context.SaveChangesAsync();
+        using (var check = db.CreateSecondContext())
+        {
+            (await check.Notes.AsNoTracking().SingleAsync(n => n.Id == note.Id)).Title.Should().Be("原標題");
+            (await check.Notes.AsNoTracking().AnyAsync(n => n.Id == extra.Id)).Should().BeFalse();
+        }
+
+        await db.Store.UpdateAsync(child.Id, l => { l.Color = "#111111"; note.Title = "一起存"; });
+        using var after = db.CreateSecondContext();
+        (await after.Notes.AsNoTracking().SingleAsync(n => n.Id == note.Id)).Title.Should().Be("一起存");
+    }
+
+    [Fact]
+    public async Task 呼叫前消費端自己對實體的未偵測修改_UpdateAsync被拒絕後原樣保留()
+    {
+        // 還原只撤 lambda 做的:呼叫前就改了、EF 還沒偵測到的修改不能被當成 lambda 的一起撤掉
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        var note = await db.AddNoteAsync("原標題");
+        note.Title = "消費端自己改的";
+
+        var act = () => db.Store.UpdateAsync(child.Id, l => l.Parent!.Name = "X");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        note.Title.Should().Be("消費端自己改的");
+        await db.Context.SaveChangesAsync();
+        using var check = db.CreateSecondContext();
+        (await check.Notes.AsNoTracking().SingleAsync(n => n.Id == note.Id)).Title.Should().Be("消費端自己改的");
+    }
+
     [Fact]
     public async Task lambda刪掉有連結的別的標籤被拒絕後_EF串聯刪掉的連結也不會在下一次存檔刪除()
     {

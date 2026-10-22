@@ -91,18 +91,35 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var label = await _db.Set<Label>().FindAsync(new object[] { labelId }, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"label {labelId} not found.");
 
-        // lambda 改的是追蹤中的實體,還可能經導覽屬性碰到別的標籤。先記下追蹤器裡每個標籤呼叫前的樣子:
-        // 驗證或存檔失敗時整批還原(否則被擋下的值會留在追蹤器,在下一次 SaveChanges 落地),
-        // 也用來分辨哪些修改是 lambda 做的——別的標籤只准經 Parent / Children 搬移,見 EnsureOnlyTargetChangedAsync
-        DetectLabelChanges();
+        // lambda 改的是追蹤中的實體,還可能經導覽屬性碰到別的標籤,或經 closure 碰到你自己的實體。
+        // 先記下追蹤器裡每個項目呼叫前的樣子:被拒絕或存檔失敗時整批還原(否則 lambda 做的修改會留在追蹤器,
+        // 在下一次 SaveChanges 落地),也用來分辨哪些修改是 lambda 做的(見 EnsureOnlyTargetChangedAsync)。
+        // 開著自動偵測時先整個偵測一次:存檔時本來就會偵測,先做好,呼叫前的修改才不會被當成 lambda 的一起撤掉。
+        // 關掉時只偵測標籤(不替消費端偵測其他實體),其他實體只記狀態、不碰它們的值
+        var detectAll = _db.ChangeTracker.AutoDetectChangesEnabled;
+        if (detectAll)
+            _db.ChangeTracker.DetectChanges();
+        else
+            DetectLabelChanges();
         var snapshot = new TrackerSnapshot(_db);
         var before = new Dictionary<Label, LabelBefore>(ReferenceEqualityComparer.Instance);
-        foreach (var entry in TrackedLabelEntries())
+        var linksBefore = new Dictionary<object, EntityState>(ReferenceEqualityComparer.Instance);
+        foreach (var entry in TrackedEntries())
         {
-            snapshot.CaptureDetected(entry);   // 上一行剛偵測過
-            before[entry.Entity] = new LabelBefore(
-                entry.State, entry.Entity.Id, entry.Entity.ParentId,
-                entry.State == EntityState.Unchanged ? null : entry.CurrentValues.Clone());   // Unchanged:呼叫前的值就是原值
+            if (entry.Entity is Label tracked)
+            {
+                snapshot.CaptureDetected(entry);   // 上面剛偵測過
+                before[tracked] = new LabelBefore(
+                    entry.State, tracked.Id, tracked.ParentId,
+                    entry.State == EntityState.Unchanged ? null : entry.CurrentValues.Clone());   // Unchanged:呼叫前的值就是原值
+                continue;
+            }
+            if (IsLink(entry))
+                linksBefore[entry.Entity] = entry.State;
+            if (entry.State == EntityState.Unchanged)
+                snapshot.Bystander(entry, revertValues: detectAll);   // 絕大多數:輕量記錄,還原時才檢查
+            else
+                snapshot.Capture(entry, withValues: detectAll);       // 消費端自己的未存變更:連值一起記
         }
         snapshot.Own(label);
 
@@ -139,7 +156,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             // 導覽屬性(Parent、Children)的變更要等偵測變更才會寫回 ParentId;不先做,下面的檢查看到的是舊值
             DetectLabelChanges();
 
-            await EnsureOnlyTargetChangedAsync(label, before, ct).ConfigureAwait(false);
+            await EnsureOnlyTargetChangedAsync(label, before, linksBefore, ct).ConfigureAwait(false);
 
             // 改名走與 RenameAsync 相同的規則(正規化 + 唯一性)
             if (!string.Equals(label.Name, storedName, StringComparison.Ordinal))
@@ -185,7 +202,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             snapshot.RestoreKeys();
             FindConflictingInstances(cut: true);
             DetectLabelChangesBestEffort();
-            snapshot.Restore(detachUncapturedLabels: true);
+            snapshot.Restore(detachUncaptured: true);
             await ReloadConflictsAsync(ex, snapshot).ConfigureAwait(false);
             throw;
         }
@@ -399,6 +416,33 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             tracker.AutoDetectChangesEnabled = autoDetect;
         }
     }
+
+    /// <summary>
+    /// 追蹤器裡的每一個項目;同 <see cref="TrackedLabelEntries"/>,列舉時暫時關掉自動偵測,不替消費端掃整個 context。
+    /// 逐項給、不先收成清單:追蹤一萬個實體時,一萬筆的清單會落進 Large Object Heap。列舉途中不可改動追蹤器。
+    /// </summary>
+    private IEnumerable<EntityEntry> TrackedEntries()
+    {
+        var tracker = _db.ChangeTracker;
+        var autoDetect = tracker.AutoDetectChangesEnabled;
+        tracker.AutoDetectChangesEnabled = false;
+        try
+        {
+            foreach (var entry in tracker.Entries())
+                yield return entry;
+        }
+        finally
+        {
+            tracker.AutoDetectChangesEnabled = autoDetect;
+        }
+    }
+
+    private HashSet<Type>? _linkTypes;
+
+    /// <summary>這個項目是不是套件的連結實體(<see cref="LabelLink{TEntity, TKey}"/>)。連結型別依 registry 建一次(registry 已封存,不會再變)。</summary>
+    private bool IsLink(EntityEntry entry)
+        => (_linkTypes ??= new HashSet<Type>(_registry.Operations.Select(d =>
+               typeof(LabelLink<,>).MakeGenericType(d.ClrType, d.KeyType)))).Contains(entry.Metadata.ClrType);
 
     /// <summary>
     /// 沿著追蹤中標籤的 Parent / Children 找「另一個實例、主鍵卻跟追蹤中的標籤相同」的 Label。
@@ -669,19 +713,45 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
     /// <summary>
     /// UpdateAsync 的 lambda 只能改目標標籤本身;別的標籤只准經 Parent / Children 搬移,也就是只改 ParentId。
-    /// 改了別的標籤的其他欄位、帶進新標籤、刪掉別的標籤,一律拋例外(2.0 起;1.x 會照樣存檔,
-    /// 那些標籤的並發戳記不輪換、新標籤也沒有建立時間與戳記)。比的是 lambda 前後的差異:
-    /// 消費端自己在呼叫前做、還沒存的修改不算,照舊隨這次存檔送出。lambda 只是載入進來讀的標籤也不算。
+    /// 一律拋例外的(2.0 起;1.x 會照樣存檔,或靜默地丟掉):改了別的標籤的其他欄位、帶進新標籤、刪掉或移出別的標籤、
+    /// 改了別的標籤的追蹤狀態(例如把消費端的未存修改設回 Unchanged)、刪掉或移出目標自己、刪掉或新增連結。
+    /// 比的是 lambda 前後的差異:消費端自己在呼叫前做、還沒存的修改不算,照舊隨這次存檔送出。
+    /// lambda 只是載入進來讀的標籤或連結也不算。你自己的其他實體不歸 store 管,不在這裡檢查(被拒絕時一樣會還原)。
     /// </summary>
-    private async Task EnsureOnlyTargetChangedAsync(Label target, IReadOnlyDictionary<Label, LabelBefore> before, CancellationToken ct)
+    private async Task EnsureOnlyTargetChangedAsync(
+        Label target, IReadOnlyDictionary<Label, LabelBefore> before, IReadOnlyDictionary<object, EntityState> linksBefore,
+        CancellationToken ct)
     {
         const string rule = "update may only change the label being updated (and move other labels through Parent or Children)";
-        foreach (var entry in TrackedLabelEntries())
+
+        switch (_db.Entry(target).State)
         {
-            var other = entry.Entity;
+            case EntityState.Deleted:
+                throw new InvalidOperationException($"{rule}, but it deleted the label being updated. Use DeleteAsync instead.");
+            case EntityState.Detached:
+                throw new InvalidOperationException($"{rule}, but it removed the label being updated from the context.");
+        }
+
+        // 一次走過追蹤器(不經 DbContext.Entry:那會在開著自動偵測時逐項偵測)。present 只收標籤與連結:
+        // 下面只查這兩種有沒有被移出去,你自己的實體不歸 store 管,也不必為它們建一萬筆的集合
+        var present = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        foreach (var any in TrackedEntries())
+        {
+            if (any.Entity is not Label)
+            {
+                if (!IsLink(any)) continue;
+                present.Add(any.Entity);
+                if (linksBefore.TryGetValue(any.Entity, out var linkWas) ? any.State != linkWas : any.State == EntityState.Added)
+                    throw new InvalidOperationException(LinkMessage(any, added: !linksBefore.ContainsKey(any.Entity)));
+                continue;
+            }
+
+            var entry = any;   // 不經 DbContext.Entry:那會在開著自動偵測時逐項偵測
+            var other = (Label)any.Entity;
+            present.Add(other);
             if (ReferenceEquals(other, target)) continue;
             before.TryGetValue(other, out var was);
-            var storedName = was?.Values?[nameof(Label.Name)] as string ?? entry.Property(l => l.Name).OriginalValue;
+            var storedName = was?.Values?[nameof(Label.Name)] as string ?? entry.Property(nameof(Label.Name)).OriginalValue as string;
 
             // 新標籤:主鍵沒設的會是 Added;主鍵已設的,EF 從導覽屬性發現時當成既有的實體、標成 Modified,
             // 要問資料庫才分得出來(只在這次呼叫之前沒追蹤、又被改過的標籤上問,也就是一定要拋例外的時候)
@@ -695,6 +765,11 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             if (entry.State == EntityState.Deleted && was?.State != EntityState.Deleted)
                 throw new InvalidOperationException(
                     $"{rule}, but it deleted label '{storedName}' (Id: {other.Id}). Use DeleteAsync instead.");
+            // 呼叫前就在追蹤器裡的標籤,只准從 Unchanged 變成 Modified(搬移);其他的狀態改變都是 lambda 動了它的追蹤狀態
+            if (was is not null && entry.State != was.State
+                && !(was.State == EntityState.Unchanged && entry.State == EntityState.Modified))
+                throw new InvalidOperationException(
+                    $"{rule}, but it changed the tracking state of label '{storedName}' (Id: {other.Id}) from {was.State} to {entry.State}.");
             if (entry.State is not (EntityState.Modified or EntityState.Added)) continue;
 
             var changed = entry.Properties
@@ -709,6 +784,23 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                     $"{rule}, but it changed {string.Join(", ", changed)} on label '{storedName}' (Id: {other.Id}). " +
                     "Call UpdateAsync on that label instead.");
         }
+
+        // 呼叫前在追蹤器裡、現在不在了的:被 Detach,或對 Added 的項目 Remove(EF 對 Added 的 Remove 就是 detach)
+        foreach (var (other, was) in before)
+        {
+            if (!ReferenceEquals(other, target) && !present.Contains(other))
+                throw new InvalidOperationException(
+                    $"{rule}, but it removed label '{(was.Values?[nameof(Label.Name)] as string) ?? other.Name}' (Id: {other.Id}) from the context.");
+        }
+        foreach (var link in linksBefore.Keys)
+        {
+            if (!present.Contains(link))
+                throw new InvalidOperationException(LinkMessage(_db.Entry(link), added: false));
+        }
+
+        string LinkMessage(EntityEntry link, bool added)
+            => $"{rule}, but it {(added ? "added" : "removed or changed")} a link of label {link.Property("LabelId").CurrentValue} " +
+               $"(entity {link.Property("EntityId").CurrentValue}). Use {(added ? "AttachAsync" : "DetachAsync")} instead.";
     }
 
     /// <summary>建立與改名時主動驗證名稱長度(SQLite 不強制 HasMaxLength,不能只靠資料庫)。</summary>

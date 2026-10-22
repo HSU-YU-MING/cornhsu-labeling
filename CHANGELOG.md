@@ -33,7 +33,8 @@
   以前只驗目標標籤,`UpdateAsync(c.Id, l => l.Parent!.Name = "   ")` 會把空白名稱寫進父標籤(v1.1.0 就有)。
   現在 lambda 改了名稱的其他標籤、以及經導覽屬性帶進來的新標籤,都照目標標籤的規則去空白、檢查空白、長度與唯一性;
   訊息與 `ParamName` 沿用既有的。lambda 只是載入進來讀的標籤不驗也不改寫(名稱不合現行規則的舊資料照樣留著);
-  占用檢查看得到同一次存檔,其他標籤接手目標讓出的名字(`l.Name = "tmp"; l.Parent!.Name = "a"`)照常成功,
+  占用檢查看得到同一次存檔,其他標籤接手目標讓出的名字(`l.Name = "tmp"; l.Parent!.Name = "a"`)、或接手你在同一次存檔裡
+  刪掉的標籤的名字,都照常成功(和 v1.1.0 一樣),
   目標自己的改名維持只看資料庫。算 minor 的理由:v1.1.0 在資料庫才失敗的寫法(其他標籤改成已被占用、
   超過欄寬的名稱,或兩個標籤搶同一個名字)以前拋 `DbUpdateException`,現在提早拋 `InvalidOperationException`
   或 `ArgumentException`;有人接的是 `DbUpdateException` 的話要跟著改。

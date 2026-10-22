@@ -643,9 +643,12 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
     /// <summary>
     /// 驗證 UpdateAsync 的 lambda 經導覽屬性改了名稱(或帶進來)的其他標籤,規則同 <see cref="RenameAsync"/>,
-    /// 但占用檢查看得到同一次存檔:兩個標籤要用同一個名字算占用;資料庫裡的占用者若在這次存檔裡改用別的名字(讓出),不算占用
-    /// ——「目標改成 tmp、父標籤接手目標原本的名字」這種寫法在 v1.1.0 能成功,不能因為逐筆查資料庫而開始失敗。
-    /// 目標標籤自己的改名維持 v1.1.0 的規則(只看資料庫),所以兩個標籤互換名稱(資料庫排不出順序的環)照舊擋在目標那一步。
+    /// 但占用檢查看得到同一次存檔:兩個標籤要用同一個名字算占用;資料庫裡的占用者若在這次存檔裡改用別的名字、
+    /// 或被刪掉(讓出),不算占用——「目標改成 tmp、父標籤接手目標原本的名字」、「消費端刪掉 q、別的標籤改名成 q」
+    /// 這些寫法在 v1.1.0 能成功,不能因為逐筆查資料庫而開始失敗。
+    /// 目標標籤自己的改名維持 v1.1.0 的規則(只看資料庫),所以有目標參與的互換名稱照舊擋在目標那一步;
+    /// 只有其他標籤彼此互換(資料庫排不出順序的環)時,兩邊都算讓出、放行到資料庫,由唯一索引擋下、拋 DbUpdateException 並還原
+    /// ——和 v1.1.0 一樣是在資料庫才失敗。
     /// </summary>
     private async Task ValidateOtherNamesAsync(
         Label target, IReadOnlyList<Label> others, IReadOnlyList<Label> tracked, string paramName, CancellationToken ct)
@@ -680,9 +683,12 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             foreach (var holderId in holders)
             {
                 var holder = tracked.FirstOrDefault(l => l.Id == holderId);
-                var givesUp = holder is not null
-                    && _db.Entry(holder).Property(l => l.Name).IsModified
-                    && !string.Equals(finalName.TryGetValue(holder, out var next) ? next : holder.Name, name, StringComparison.Ordinal);
+                var holderEntry = holder is null ? null : _db.Entry(holder);
+                // 讓出:占用者在同一次存檔裡被刪掉(消費端自己標成刪除的),或名稱真的改成別的
+                var givesUp = holderEntry is not null
+                    && (holderEntry.State == EntityState.Deleted
+                        || (holderEntry.Property(l => l.Name).IsModified
+                            && !string.Equals(finalName.TryGetValue(holder!, out var next) ? next : holder!.Name, name, StringComparison.Ordinal)));
                 if (!givesUp)
                     throw new InvalidOperationException($"label name '{name}' is already taken.");
             }

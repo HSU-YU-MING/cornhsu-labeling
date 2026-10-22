@@ -370,6 +370,24 @@ public class UpdateFailureTests
     }
 
     [Fact]
+    public async Task 消費端已把占用者標成刪除還沒存_lambda讓別的標籤接手那個名字_照常存檔()
+    {
+        // v1.1.0 能成功:刪除與改名在同一次存檔,EF 會先刪再改
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        var holder = await db.Store.CreateAsync("q");
+        var other = await db.Store.CreateAsync("x", parentId: target.Id);
+        db.Context.Remove(holder);   // 消費端自己的未存刪除
+
+        await db.Store.UpdateAsync(target.Id, l => l.Children.Single().Name = "q");
+
+        using var check = db.CreateSecondContext();
+        (await check.Set<Label>().AsNoTracking().Select(l => l.Name).ToListAsync())
+            .Should().BeEquivalentTo(new[] { "t", "q" });
+        (await StoredAsync(db, other.Id)).Name.Should().Be("q");
+    }
+
+    [Fact]
     public async Task lambda讓兩個標籤要用同一個新名字_照樣擋下_資料庫不變()
     {
         using var db = new TestDb();

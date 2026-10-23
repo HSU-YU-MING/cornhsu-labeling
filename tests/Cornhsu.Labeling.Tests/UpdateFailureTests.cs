@@ -362,7 +362,10 @@ public class UpdateFailureTests
         var links = db.Context.Set<Cornhsu.Labeling.EntityFrameworkCore.LabelLink<TestNote, Guid>>();
         await links.Include(x => x.Label).Include(x => x.Entity).LoadAsync();
         var link = links.Local.Single();
-        var attachedAt = link.AttachedAt;
+        // 比對的基準要從資料庫讀:這個連結是在同一個 context 建的,記憶體裡的 AttachedAt 有 100ns 精度,
+        // PostgreSQL 的 timestamptz 只存到微秒,拿記憶體的值去比讀回來的值只會在 PostgreSQL 上不相等
+        using var before = db.CreateSecondContext();
+        var attachedAt = (await before.Set<Cornhsu.Labeling.EntityFrameworkCore.LabelLink<TestNote, Guid>>().AsNoTracking().SingleAsync()).AttachedAt;
         db.Context.ChangeTracker.AutoDetectChangesEnabled = autoDetect;
 
         var act = () => db.Store.UpdateAsync(target.Id, l =>

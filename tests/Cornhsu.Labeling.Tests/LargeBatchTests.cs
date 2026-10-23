@@ -18,6 +18,25 @@ public class LargeBatchTests
             : 3_000;
 
     [Fact]
+    public async Task All給很多名稱_命中超過1000個實體_照常完成()
+    {
+        // 名稱多的 All 先在記憶體算出命中的實體,再以實體主鍵查詢:主鍵清單超過 1,000 個時一樣以一個參數送出(能的話)
+        using var db = new TestDb();
+        var notes = Enumerable.Range(0, 1_200).Select(i => new TestNote { Id = Guid.NewGuid(), Title = $"n{i:D4}" }).ToList();
+        db.Context.AddRange(notes);
+        await db.Context.SaveChangesAsync();
+        var names = Enumerable.Range(0, 9).Select(i => $"all{i}").ToList();
+        await db.Store.AttachManyAsync(notes, names);
+        await db.Store.DetachAsync(notes[0], "all8");
+
+        var query = await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All);
+
+        (await query.CountAsync()).Should().Be(1_199);
+        (await query.AnyAsync(n => n.Id == notes[0].Id)).Should().BeFalse();
+        (await db.Store.FindByLabelsAsync(names, LabelMatch.All)).Should().HaveCount(1_199);
+    }
+
+    [Fact]
     public async Task 以名稱查詢_子樹裡的標籤數超過資料庫的參數上限_照常完成()
     {
         using var db = new TestDb();

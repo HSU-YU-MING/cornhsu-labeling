@@ -152,6 +152,11 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   EF 翻譯不出來;store 會先翻譯一次確認,翻不出來就退回 EF 的預設做法(EF 9 內嵌常數、EF 10 一個值一個參數),
   結果跟 1.1.0 相同。EF Core 8 沒有 `EF.Parameter`,一律照它自己的預設。數量少時照舊用 EF 的預設。
   這也是 1.1.0 + EF 10 就有的問題。
+- **`LabelMatch.All` 給很多名稱時照常完成**。以前每個名稱一個 `IN` 子查詢、全部以 `AND` 接起來,SQL Server 在二十個名稱左右
+  就拋 8623(查詢處理器資源不足,LocalDB 實測 16 個名稱還能、20 個就失敗;1.1.0 也一樣),內嵌常數也只撐到幾十個。現在超過 8 個名稱時,
+  store 先一次撈出這些標籤(含子孫)的 (實體, 標籤) 配對、在記憶體算出每一組都有的實體,`QueryByLabelsAsync` 回傳以那些實體主鍵查詢的
+  `IQueryable`;語意與子孫展開都不變(同時給祖先與子孫名稱也一樣)。LocalDB 上 250 個名稱約 35–50 ms、500 個約 60–80 ms。
+  8 個以內維持原本的一條 SQL。
 - **`GetLabelsOfManyAsync` 的排序改在資料庫做,與 `GetLabelsOfAsync`／`GetAllAsync` 一致**。
   以前名稱在記憶體用 Ordinal 排,不分大小寫的 collation 上 `SortOrder` 相同的標籤,同一個實體用兩種讀法
   會排得不一樣(`B-upper, a-lower` 對 `a-lower, B-upper`)。現在批次讀的順序一律跟資料庫的 collation 走:

@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 
@@ -46,7 +47,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
     public async Task<IReadOnlyList<LabelHit>> QueryHitsAsync(
         DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match, CancellationToken ct)
     {
-        var entities = await BuildEntityQuery(db, labelIdGroups, match)
+        var entities = await (await BuildEntityQueryAsync(db, labelIdGroups, match, ct).ConfigureAwait(false))
             .ToListAsync(ct).ConfigureAwait(false);
 
         return entities
@@ -171,38 +172,68 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         return result;
     }
 
-    public IQueryable CreateQueryByLabels(DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match)
-        => BuildEntityQuery(db, labelIdGroups, match);
+    public async Task<IQueryable> CreateQueryByLabelsAsync(
+        DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match, CancellationToken ct)
+        => await BuildEntityQueryAsync(db, labelIdGroups, match, ct).ConfigureAwait(false);
+
+    /// <summary>
+    /// All 模式的群組(名稱)超過這個數目時,不在 SQL 裡為每個群組串一個 IN 子查詢:SQL Server 在二十個左右就拋 8623
+    /// (查詢處理器資源不足,1.1.0 也一樣),內嵌常數也只撐到幾十個。改成一次撈出聯集標籤的 (實體, 標籤) 配對,
+    /// 在記憶體算哪些實體每一組都有,再回傳以那些實體主鍵查詢的 IQueryable。數目少時維持一條 SQL,不先往返。
+    /// </summary>
+    internal const int MaxAllGroupsInSql = 8;
 
     /// <summary>
     /// 組出「貼著指定標籤的實體」查詢。
     /// Any(或只有一個群組):所有 Id 合併成一個 IN。
-    /// All:第一個群組為基底,其餘群組各以 IN 子查詢做交集
-    /// (benchmark 實測:子查詢比 GroupBy/HAVING 慢一些但語意能正確涵蓋子孫群組)。
+    /// All:群組不多時第一個群組為基底,其餘群組各以 IN 子查詢做交集
+    /// (benchmark 實測:子查詢比 GroupBy/HAVING 慢一些但語意能正確涵蓋子孫群組);群組多時見 <see cref="MaxAllGroupsInSql"/>。
     /// </summary>
-    private IQueryable<TEntity> BuildEntityQuery(
-        DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> groups, LabelMatch match)
+    private async Task<IQueryable<TEntity>> BuildEntityQueryAsync(
+        DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> groups, LabelMatch match, CancellationToken ct)
     {
+        if (match == LabelMatch.All && groups.Count > MaxAllGroupsInSql)
+        {
+            var matched = await MatchAllInMemoryAsync(db, groups, ct).ConfigureAwait(false);
+            return WithLargeListsAsOneParameter(matched.Count > MaxIdsPerQuery && EfParameterForKeys is not null,
+                asOneParameter => db.Set<LabelLink<TEntity, TKey>>()
+                    .Where(ValuesContain(matched, nameof(LabelLink<TEntity, TKey>.EntityId), EfParameterForKeys, asOneParameter))
+                    .Select(l => l.Entity)
+                    .Distinct());
+        }
+
         var lists = match == LabelMatch.Any || groups.Count == 1
             ? new List<List<Guid>> { groups.SelectMany(g => g).Distinct().ToList() }
             : groups.Select(g => g.ToList()).ToList();
+        return WithLargeListsAsOneParameter(
+            EfParameterLookup.ForGuidList is not null && lists.Any(ids => ids.Count > MaxIdsPerQuery),
+            asOneParameter => BuildEntityQuery(db, lists, asOneParameter));
+    }
 
-        if (EfParameterLookup.ForGuidList is null || lists.All(ids => ids.Count <= MaxIdsPerQuery))
-            return BuildEntityQuery(db, lists, asOneParameter: false);
+    /// <summary>
+    /// All 的群組很多時:一次撈出聯集裡每個標籤的 (實體, 標籤) 配對,在記憶體逐一檢查實體是否每一組都至少有一個標籤。
+    /// 群組可以重疊(同時給祖先與子孫的名稱),跟 SQL 那條路的語意相同。
+    /// </summary>
+    private async Task<List<TKey>> MatchAllInMemoryAsync(
+        DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> groups, CancellationToken ct)
+    {
+        var union = groups.SelectMany(g => g).Distinct().ToList();
+        var pairs = await WithLargeListsAsOneParameter(
+                EfParameterLookup.ForGuidList is not null && union.Count > MaxIdsPerQuery,
+                asOneParameter => db.Set<LabelLink<TEntity, TKey>>()
+                    .Where(ValuesContain(union, nameof(LabelLink<TEntity, TKey>.LabelId), EfParameterLookup.ForGuidList, asOneParameter))
+                    .Select(l => new { l.EntityId, l.LabelId }))
+            .ToListAsync(ct).ConfigureAwait(false);
 
-        // 大集合改用 EF.Parameter 以一個參數送出(見 LabelIdIn)。但那要資料庫能拆 JSON 陣列:
-        // SQL Server 的相容性層級低於 130 時沒有 OPENJSON,EF 會在翻譯時拋例外。先翻譯一次看看,
-        // 翻不出來就退回 EF 的預設做法(EF 9 在那裡是內嵌常數、EF 10 是一個值一個參數),跟 1.1.0 一樣
-        var query = BuildEntityQuery(db, lists, asOneParameter: true);
-        try
+        var sets = groups.Select(g => new HashSet<Guid>(g)).ToList();
+        var matched = new List<TKey>();
+        foreach (var entity in pairs.GroupBy(p => p.EntityId))
         {
-            query.ToQueryString();
-            return query;
+            var labels = new HashSet<Guid>(entity.Select(p => p.LabelId));
+            if (sets.All(s => s.Overlaps(labels)))
+                matched.Add(entity.Key);
         }
-        catch (InvalidOperationException)
-        {
-            return BuildEntityQuery(db, lists, asOneParameter: false);
-        }
+        return matched;
     }
 
     /// <summary>
@@ -222,8 +253,31 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
     }
 
     /// <summary>
+    /// 有超過 <see cref="MaxIdsPerQuery"/> 個值的集合時,先試著以 <c>EF.Parameter</c> 把整個集合當成一個參數送出(見 <see cref="ValuesContain{TValue}"/>)。
+    /// 那要資料庫能拆 JSON 陣列:SQL Server 的相容性層級低於 130 時沒有 OPENJSON,EF 會在翻譯時拋例外。
+    /// 先翻譯一次看看,翻不出來就退回 EF 的預設做法(EF 9 在那裡是內嵌常數、EF 10 是一個值一個參數),跟 1.1.0 一樣。
+    /// </summary>
+    private static IQueryable<T> WithLargeListsAsOneParameter<T>(bool large, Func<bool, IQueryable<T>> build)
+    {
+        if (!large) return build(false);
+        var query = build(true);
+        try
+        {
+            query.ToQueryString();
+            return query;
+        }
+        catch (InvalidOperationException)
+        {
+            return build(false);
+        }
+    }
+
+    /// <summary>EF.Parameter 封閉成 <c>List&lt;TKey&gt;</c> 的版本(實體主鍵清單用);EF Core 8 上是 null。</summary>
+    private static readonly MethodInfo? EfParameterForKeys = EfParameterLookup.Find(typeof(EF), typeof(List<TKey>));
+
+    /// <summary>
     /// 組 <c>l =&gt; ids.Contains(l.LabelId)</c>。標籤 Id 集合(含子孫的一整棵子樹)可能有幾萬個,
-    /// 而 EF Core 10 預設把 Contains 展開成一個值一個參數,超過資料庫的參數上限就拋例外。
+    /// 而 EF Core 10 預設把 Contains 展開成一個值一個參數,SQLite 上超過參數上限(32,766)就拋例外。
     /// 這裡回傳的是要讓呼叫端接著組合的 IQueryable(QueryByLabelsAsync),只能是一條 SQL,不能像批次 API 那樣分批往返;
     /// 所以超過 <see cref="MaxIdsPerQuery"/> 時改用 <c>EF.Parameter(ids)</c>,讓整個集合以一個參數送出
     /// (EF Core 10 文件寫明的逐查詢覆寫:SQLite 的 json_each、SQL Server 的 OPENJSON、PostgreSQL 的陣列參數)。
@@ -231,15 +285,20 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
     /// 數量少時維持 EF 的預設(EF 10 的多參數對查詢計畫較好)。<paramref name="asOneParameter"/> 由呼叫端確認翻譯得出來才給 true。
     /// </summary>
     private static Expression<Func<LabelLink<TEntity, TKey>, bool>> LabelIdIn(List<Guid> ids, bool asOneParameter)
+        => ValuesContain(ids, nameof(LabelLink<TEntity, TKey>.LabelId), EfParameterLookup.ForGuidList, asOneParameter);
+
+    /// <summary>組 <c>l =&gt; values.Contains(l.{property})</c>;值超過 <see cref="MaxIdsPerQuery"/> 個、而且 <paramref name="asOneParameter"/> 時包一層 EF.Parameter。</summary>
+    private static Expression<Func<LabelLink<TEntity, TKey>, bool>> ValuesContain<TValue>(
+        List<TValue> values, string property, MethodInfo? efParameter, bool asOneParameter)
     {
         var link = Expression.Parameter(typeof(LabelLink<TEntity, TKey>), "l");
-        Expression values = Expression.Field(
-            Expression.Constant(new StrongBox<List<Guid>>(ids)), nameof(StrongBox<List<Guid>>.Value));
-        if (asOneParameter && ids.Count > MaxIdsPerQuery && EfParameterLookup.ForGuidList is { } efParameter)
-            values = Expression.Call(efParameter, values);
+        Expression list = Expression.Field(
+            Expression.Constant(new StrongBox<List<TValue>>(values)), nameof(StrongBox<List<TValue>>.Value));
+        if (asOneParameter && values.Count > MaxIdsPerQuery && efParameter is not null)
+            list = Expression.Call(efParameter, list);
         var body = Expression.Call(
-            typeof(Enumerable), nameof(Enumerable.Contains), new[] { typeof(Guid) },
-            values, Expression.Property(link, nameof(LabelLink<TEntity, TKey>.LabelId)));
+            typeof(Enumerable), nameof(Enumerable.Contains), new[] { typeof(TValue) },
+            list, Expression.Property(link, property));
         return Expression.Lambda<Func<LabelLink<TEntity, TKey>, bool>>(body, link);
     }
 

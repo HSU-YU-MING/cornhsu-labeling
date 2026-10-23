@@ -42,6 +42,7 @@ internal interface ILabelableOperations : ILabelableDescriptor
         DbContext db, IReadOnlyList<ILabelable> entities, CancellationToken ct);
 
     /// <summary>建立「貼著指定標籤的實體」查詢;群組語意同 <see cref="QueryHitsAsync"/>。
-    /// 實際回傳 <c>IQueryable&lt;TEntity&gt;</c>。</summary>
-    IQueryable CreateQueryByLabels(DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match);
+    /// 實際回傳 <c>IQueryable&lt;TEntity&gt;</c>。All 的群組很多時會先查一次資料庫,所以是非同步的。</summary>
+    Task<IQueryable> CreateQueryByLabelsAsync(
+        DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match, CancellationToken ct);
 }

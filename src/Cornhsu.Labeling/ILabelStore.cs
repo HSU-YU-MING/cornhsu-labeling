@@ -148,6 +148,8 @@ public interface ILabelStore
     /// <summary>
     /// Multi-label single-type strongly typed query with the same semantics as <see cref="FindByLabelsAsync"/>;
     /// returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.
+    /// With <see cref="LabelMatch.All"/> and more than eight names, the store first works out which entities carry
+    /// every label and returns a query over those entities' keys (one condition per name does not scale in SQL).
     /// </summary>
     /// <typeparam name="T">A registered labelable type.</typeparam>
     /// <param name="labelNames">Label names.</param>

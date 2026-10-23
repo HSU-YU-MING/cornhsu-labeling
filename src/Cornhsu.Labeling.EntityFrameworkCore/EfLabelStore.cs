@@ -374,7 +374,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         // 記憶體裡的空 IQueryable(Enumerable.Empty().AsQueryable())對那些運算子會拋例外
         if (groups is null) return _db.Set<T>().Where(_ => false);
 
-        return (IQueryable<T>)descriptor.CreateQueryByLabels(_db, groups, match);
+        return (IQueryable<T>)await descriptor.CreateQueryByLabelsAsync(_db, groups, match, ct).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyDictionary<Guid, int>> GetUsageCountsAsync(CancellationToken ct = default)

@@ -68,4 +68,37 @@ public class CompatibilityLevelTests
             await context.Database.EnsureDeletedAsync();
         }
     }
+
+    [Fact]
+    public async Task 相容性層級120上_All給很多名稱而且命中超過1000個實體_照常完成()
+    {
+        // 名稱多的 All 以命中的實體主鍵查詢;主鍵清單超過 1,000 個時想以一個參數送出,相容性層級 120 上要退回預設做法
+        if (!OnSqlServer) return;
+
+        var server = Environment.GetEnvironmentVariable("CORNHSU_TEST_SQLSERVER")
+            ?? @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true;TrustServerCertificate=true";
+        var registry = new LabelRegistry();
+        registry.Labelable<TestNote>(n => n.Title);
+        var options = new DbContextOptionsBuilder<TestDbContext>()
+            .UseSqlServer($"{server};Database=cornhsu_test_{Guid.NewGuid():N}", o => o.UseCompatibilityLevel(120))
+            .EnableServiceProviderCaching(false)
+            .Options;
+        using var context = new TestDbContext(options, registry);
+        await context.Database.EnsureCreatedAsync();
+        try
+        {
+            var store = LabelStoreFactory.Create(context, registry);
+            var notes = Enumerable.Range(0, 1_200).Select(i => new TestNote { Id = Guid.NewGuid(), Title = $"n{i:D4}" }).ToList();
+            context.AddRange(notes);
+            await context.SaveChangesAsync();
+            var names = Enumerable.Range(0, 9).Select(i => $"all{i}").ToList();
+            await store.AttachManyAsync(notes, names);
+
+            (await (await store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All)).CountAsync()).Should().Be(1_200);
+        }
+        finally
+        {
+            await context.Database.EnsureDeletedAsync();
+        }
+    }
 }

@@ -217,6 +217,53 @@ public class MultiLabelQueryTests
         }
     }
 
+    [Theory]
+    [InlineData(20)]
+    [InlineData(250)]
+    [InlineData(500)]
+    public async Task All給很多名稱_照常完成(int count)
+    {
+        // 每個名稱一個 IN 子查詢、全部以 AND 接起來的寫法,SQL Server 在二十個名稱左右就拋 8623
+        // (查詢處理器資源不足),1.1.0 也一樣。名稱多時改走另一種查法,結果要一樣
+        using var db = new TestDb();
+        var names = Enumerable.Range(0, count).Select(i => $"m{i:D3}").ToList();
+        var full = await db.AddNoteAsync("full");
+        var almost = await db.AddNoteAsync("almost");
+        await db.Store.AttachAsync(full, names);
+        await db.Store.AttachAsync(almost, names.Skip(1));
+
+        (await db.Store.FindByLabelsAsync(names, LabelMatch.All)).Select(h => h.DisplayName).Should().Equal("full");
+        var query = await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All);
+        (await query.CountAsync()).Should().Be(1);
+        (await query.Where(n => n.Title.StartsWith("f")).Select(n => n.Title).ToListAsync()).Should().Equal("full");
+        (await db.Store.FindByLabelsAsync(names.Skip(1), LabelMatch.All)).Select(h => h.DisplayName)
+            .Should().BeEquivalentTo(new[] { "full", "almost" });
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task All給很多名稱_含子孫與重疊的子樹_語意不變(bool includeDescendants)
+    {
+        // 名稱多到改走另一種查法時,子孫展開與「祖先、子孫兩個名稱同時給」的語意都要跟少數名稱時一樣
+        using var db = new TestDb();
+        var root = await db.Store.CreateAsync("root");
+        await db.Store.CreateAsync("child", parentId: root.Id);
+        var others = Enumerable.Range(0, 10).Select(i => $"x{i}").ToList();
+        var viaChild = await db.AddNoteAsync("viaChild");     // child + 其他:含子孫時 root 那組也成立
+        var viaRoot = await db.AddNoteAsync("viaRoot");       // root + 其他:child 那組不成立
+        await db.Store.AttachAsync(viaChild, others.Append("child"));
+        await db.Store.AttachAsync(viaRoot, others.Append("root"));
+        var names = others.Append("root").Append("child").ToList();   // 12 個名稱
+
+        var hits = await db.Store.FindByLabelsAsync(names, LabelMatch.All, includeDescendants);
+
+        hits.Select(h => h.DisplayName).Should().BeEquivalentTo(includeDescendants ? new[] { "viaChild" } : Array.Empty<string>());
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(names.Where(n => n != "child"), LabelMatch.All, includeDescendants))
+            .Select(n => n.Title).ToListAsync())
+            .Should().BeEquivalentTo(includeDescendants ? new[] { "viaChild", "viaRoot" } : new[] { "viaRoot" });
+    }
+
     [Fact]
     public async Task 名稱超過一批_跨批的名稱照樣對回自己的位置()
     {

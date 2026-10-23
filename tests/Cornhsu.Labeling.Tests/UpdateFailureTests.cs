@@ -344,13 +344,17 @@ public class UpdateFailureTests
     }
 
     [Theory]
-    [InlineData("Label = null")]
-    [InlineData("Entity = null")]
-    [InlineData("AttachedAt")]
-    public async Task lambda經連結的導覽屬性或欄位動到連結_一樣拒絕_連結原樣(string how)
+    [InlineData("Label = null", true)]
+    [InlineData("Label = null", false)]
+    [InlineData("Entity = null", true)]
+    [InlineData("Entity = null", false)]
+    [InlineData("AttachedAt", true)]
+    [InlineData("AttachedAt", false)]
+    public async Task lambda經連結的導覽屬性或欄位動到連結_一樣拒絕_連結原樣(string how, bool autoDetect)
     {
         // 把連結的必填導覽設成 null,EF 偵測時會把它當孤兒刪掉;改 AttachedAt 是改連結的欄位。
-        // 這些不經 context 的 Remove,要先偵測連結才看得出來(最終驗證 R24、R25、R13)
+        // 這些不經 context 的 Remove,要比對連結的導覽與欄位才看得出來(最終驗證 R24、R25、R13);
+        // 不能偵測連結:那會順著導覽把另一端的實體也偵測進去,關掉自動偵測時等於替消費端偵測
         using var db = new TestDb();
         var target = await db.Store.CreateAsync("t");
         var note = await db.AddNoteAsync();
@@ -359,6 +363,7 @@ public class UpdateFailureTests
         await links.Include(x => x.Label).Include(x => x.Entity).LoadAsync();
         var link = links.Local.Single();
         var attachedAt = link.AttachedAt;
+        db.Context.ChangeTracker.AutoDetectChangesEnabled = autoDetect;
 
         var act = () => db.Store.UpdateAsync(target.Id, l =>
         {
@@ -1066,6 +1071,24 @@ public class UpdateFailureTests
         await act.Should().ThrowAsync<ArgumentException>();
         parent.Name.Should().Be("p");
         other.ParentId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task 自動偵測變更關掉時_實體帶有追蹤中的連結_UpdateAsync也不替消費端偵測它()
+    {
+        // 檢查連結時不能用 EntityEntry.DetectChanges:那會順著導覽屬性把連結另一端的實體也偵測進去
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        var note = await db.AddNoteAsync("原標題");
+        await db.Store.AttachAsync(note, "t");
+        await db.Context.Set<Cornhsu.Labeling.EntityFrameworkCore.LabelLink<TestNote, Guid>>().Include(x => x.Entity).LoadAsync();
+        db.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+
+        await db.Store.UpdateAsync(target.Id, l => { l.Color = "#111111"; note.Title = "lambda 改的"; });
+
+        db.Context.Entry(note).State.Should().Be(EntityState.Unchanged, "關掉自動偵測時,store 不偵測你的實體");
+        using var check = db.CreateSecondContext();
+        (await check.Notes.AsNoTracking().SingleAsync(n => n.Id == note.Id)).Title.Should().Be("原標題");
     }
 
     [Fact]

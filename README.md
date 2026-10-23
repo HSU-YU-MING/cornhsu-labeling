@@ -395,9 +395,13 @@ LocalDB take about 7 and 9 ms, as in 1.1.0.
 runs (a full change detection, when it is on, plus a note of each entry's state), so it can roll the
 changes back if the update is rejected or the save fails, and once after, so it can tell what the
 lambda changed and check a parent changed through the `Parent` or `Children` navigations for cycles.
-With 1,000 tracked labels and 10,000 other tracked entities a call takes about 5–7 ms (a rejected
-one about 8–12 ms), against about 2.5 ms in 1.1.0. A context that tracks few entities — for example
-one that reads its lists with `AsNoTracking()` — does not notice the difference.
+Its cost therefore grows with the number of entities the context tracks: with automatic change
+detection on, a call runs one more full change detection than a plain `SaveChanges` (the one before the
+lambda), and an update that is rejected also walks the tracked entities to put them back. Measured with
+1,000 labels and 10,000 other entities tracked (SQLite in memory, two ordinary desktops), a call took
+roughly 5–15 ms with automatic change detection on and 3–6 ms with it off, in the same range as 1.1.0
+on the same machine. A context that tracks few entities — for example one that reads its lists with
+`AsNoTracking()` — does not notice the difference.
 
 ## Limitations
 

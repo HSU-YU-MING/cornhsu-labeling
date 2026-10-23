@@ -325,6 +325,24 @@ public class RegistrationTests
         registry.Invoking(r => SetProperty(r, property, sameValue: true)).Should().NotThrow();
     }
 
+    [Theory]
+    [InlineData(nameof(LabelRegistry.LabelTableName), "label")]
+    [InlineData(nameof(LabelRegistry.LinkTablePrefix), "labellink_")]
+    public void 封存後表名或前綴只差大小寫_也算修改_拋例外(string property, string value)
+    {
+        // 「同一個值」以 Ordinal 比較:區分大小寫的資料庫上,只差大小寫就是另一張表
+        using var db = new TestDb();
+
+        var act = () =>
+        {
+            if (property == nameof(LabelRegistry.LabelTableName)) db.Registry.LabelTableName = value;
+            else db.Registry.LinkTablePrefix = value;
+        };
+
+        act.Should().Throw<InvalidOperationException>().WithMessage($"LabelRegistry is sealed; {property} can no longer be changed.");
+        (db.Registry.LabelTableName, db.Registry.LinkTablePrefix).Should().Be(("Label", "LabelLink_"));
+    }
+
     [Fact]
     public async Task AddLabeling封存後_AutoCreateLabels照樣隨時可改_而且立刻生效()
     {

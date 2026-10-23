@@ -217,6 +217,23 @@ public class MultiLabelQueryTests
         }
     }
 
+    [Fact]
+    public async Task 名稱超過一批_跨批的名稱照樣對回自己的位置()
+    {
+        // 名稱解析一條查詢最多 100 個名稱;第 0 與第 150 個落在不同批,All 要每一個名稱都對回自己的位置才成立
+        using var db = new TestDb();
+        var names = Enumerable.Range(0, 151).Select(i => $"n{i:D3}").ToList();
+        var full = await db.AddNoteAsync("full");
+        var almost = await db.AddNoteAsync("almost");
+        await db.Store.AttachAsync(full, names);
+        await db.Store.AttachAsync(almost, names.Take(150));
+
+        (await db.Store.FindByLabelsAsync(names, LabelMatch.All)).Select(h => h.DisplayName).Should().Equal("full");
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(new[] { names[0], names[150] }.Concat(names.Skip(1).Take(149)), LabelMatch.All))
+            .Select(n => n.Title).ToListAsync()).Should().Equal("full");
+        (await db.Store.FindByLabelsAsync(names.Append("missing"), LabelMatch.All)).Should().BeEmpty();
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

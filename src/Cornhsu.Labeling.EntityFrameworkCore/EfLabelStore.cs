@@ -104,6 +104,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
         var snapshot = new TrackerSnapshot(_db);
         var before = new Dictionary<Label, LabelBefore>(ReferenceEqualityComparer.Instance);
         var linksBefore = new Dictionary<object, EntityState>(ReferenceEqualityComparer.Instance);
+        var linkEntries = new List<EntityEntry>();
         foreach (var entry in TrackedEntries())
         {
             if (entry.Entity is Label tracked)
@@ -115,7 +116,10 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
                 continue;
             }
             if (IsLink(entry))
+            {
                 linksBefore[entry.Entity] = entry.State;
+                linkEntries.Add(entry);
+            }
             if (entry.State == EntityState.Unchanged)
                 snapshot.Bystander(entry, revertValues: detectAll);   // 絕大多數:輕量記錄,還原時才檢查
             else
@@ -155,6 +159,13 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
             // 導覽屬性(Parent、Children)的變更要等偵測變更才會寫回 ParentId;不先做,下面的檢查看到的是舊值
             DetectLabelChanges();
+            // 連結也偵測一次:經連結的導覽屬性(link.Label = null 會被當孤兒刪掉)或欄位(AttachedAt)做的修改,
+            // 不偵測就看不出來,會在存檔時才落地。連結是套件的實體,消費端關掉自動偵測也照樣偵測
+            foreach (var linkEntry in linkEntries)
+            {
+                if (linkEntry.State != EntityState.Detached)
+                    linkEntry.DetectChanges();
+            }
 
             await EnsureOnlyTargetChangedAsync(label, before, linksBefore, ct).ConfigureAwait(false);
 

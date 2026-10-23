@@ -191,8 +191,9 @@ await store.DeleteAsync(review.Id);    // 各型別的連結由 cascade delete �
 `UpdateAsync` 只改你傳入的那個標籤。lambda 裡可以經 `Parent` 或 `Children` 搬移別的標籤;
 改別的標籤的欄位、帶進新標籤、刪掉或移出任何標籤(包括正在更新的這一個)、改別的標籤的追蹤狀態、新增或刪掉連結,
 都會拋 `InvalidOperationException`、什麼都不存——請改用 `UpdateAsync`、`RenameAsync`、`CreateAsync`、`DeleteAsync`、
-`AttachAsync` 或 `DetachAsync`。lambda 對你自己的實體做的修改會跟著這次更新一起存;更新被拒絕時,它們也一起撤掉
-(context 關掉自動偵測變更時例外:那時 store 完全不看你的實體)。
+`AttachAsync` 或 `DetachAsync`。lambda 對你自己的實體做的修改會跟著這次更新一起存。更新被拒絕時,store 會撤掉屬性值的修改,
+以及經 context 加入、移除、Detach 的實體;但經你自己實體的導覽屬性做的修改(集合加入、多對多、把參考指向新的實體)
+不在還原範圍,context 關掉自動偵測變更時 store 也完全不看你的實體。
 
 ## 不用 DI 容器
 

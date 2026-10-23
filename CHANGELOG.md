@@ -44,7 +44,8 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
    - 舊:lambda 裡 `db.Entry(x).State = …`(Detached、Unchanged 等)。新:在呼叫之外自己處理追蹤狀態。
    - 照常可用:`l.Parent = x`、`l.Children.Add(既有的標籤)`、經導覽屬性讓別的標籤換父標籤(照樣檢查循環),
      你在呼叫前自己對別的標籤做、還沒存的修改,以及 lambda 對你自己的實體(標籤與連結以外)做的修改——
-     它們跟著這次更新一起存;更新被拒絕時一起撤掉(context 關掉自動偵測變更時,store 不看你的實體,也就不撤)。
+     它們跟著這次更新一起存;更新被拒絕時撤掉屬性值的修改,以及經 context 加入、移除、Detach 的實體——經你自己實體的導覽屬性
+     做的修改(集合加入、多對多、把參考指向新的實體)不撤;context 關掉自動偵測變更時,store 不看你的實體,也就不撤。
 3. **對外可見的例外型別與訊息**(只影響接住或斷言這些例外的程式碼):
    - `AddLabeling(configure: null)`、`ApplyLabelModel(null, …)`／`ApplyLabelModel(b, null)`:
      `NullReferenceException` → `ArgumentNullException`(`ParamName` 為 `configure`、`b`、`registry`)。
@@ -189,7 +190,9 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   經導覽屬性帶進的新標籤沒有建立時間與戳記(主鍵已設的還會被當成既有的標籤下 UPDATE、影響 0 列而拋並發例外)。
   現在 lambda 執行完先比對它前後的差異:改了別的標籤 `ParentId` 以外的欄位、帶進新標籤、刪掉或移出任何標籤
   (包括目標自己,與你新加還沒存的標籤)、改了別的標籤的追蹤狀態、刪掉或新增連結,都拋 `InvalidOperationException`
-  並照既有機制還原,什麼都不存;還原的範圍包括 lambda 對你自己的實體做的修改與新加的實體(開著自動偵測時)。
+  並照既有機制還原,什麼都不存;經連結的導覽屬性或欄位動到連結(`link.Label = null`、改 `AttachedAt`)也一樣擋下。
+  還原的範圍包括 lambda 對你自己的實體做的屬性值修改,以及經 context 加入、移除、Detach 的實體(開著自動偵測時);
+  經你自己實體的導覽屬性做的修改(集合加入、多對多、把參考指向新的實體)不在還原範圍。
   你自己的實體不歸 store 管,lambda 裡改了不擋,照常隨這次存檔送出——跟呼叫前改的一樣。lambda 執行期間 store 會暫時把
   `ChangeTracker.CascadeDeleteTiming` 設成 `OnSaveChanges`(結束後放回原值),所以被拒絕的刪除不會留下 EF 當下
   就串聯標成刪除的連結。改了別的標籤的 `Id` 也一樣擋下,

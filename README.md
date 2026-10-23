@@ -202,9 +202,11 @@ await store.DeleteAsync(review.Id);    // links on every type are removed by cas
 detaching a label (the one being updated included), changing another label's tracking state, or
 adding or removing a link throws `InvalidOperationException` and saves nothing — call `UpdateAsync`,
 `RenameAsync`, `CreateAsync`, `DeleteAsync`, `AttachAsync` or `DetachAsync` instead. Changes the
-lambda makes to your own entities are saved along with the update; when the update is rejected they
-are rolled back with everything else (unless the context has automatic change detection turned off,
-in which case the store does not look at your entities at all).
+lambda makes to your own entities are saved along with the update. When the update is rejected, the
+store rolls back property values and entities added, removed or detached through the context — but not
+changes made through your entities' navigation properties (adding to a collection or a many-to-many
+relationship, or pointing a reference at a new entity), and nothing of yours at all when the context has
+automatic change detection turned off.
 
 ## Without a DI container
 

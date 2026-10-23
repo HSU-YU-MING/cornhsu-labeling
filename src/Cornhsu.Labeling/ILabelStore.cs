@@ -38,8 +38,11 @@ public interface ILabelStore
     /// changing another label's tracking state, or adding or removing a link throws <see cref="InvalidOperationException"/>.
     /// Changes the update makes to your own entities are saved along with it.
     /// If the update is rejected or cannot be saved, the changes made inside <paramref name="update"/>
-    /// are rolled back — your own entities included, unless the context has automatic change detection turned off —
-    /// so a later save of the same context does not persist them.
+    /// are rolled back so a later save of the same context does not persist them: everything on labels and links,
+    /// and on your own entities their property values plus entities you add, remove or detach through the context
+    /// (unless the context has automatic change detection turned off, in which case the store does not look at your
+    /// entities). Changes made through your own entities' navigation properties — adding to a collection, or to a
+    /// many-to-many relationship, or pointing a reference at a new entity — are not rolled back.
     /// </summary>
     /// <param name="labelId">Label id.</param>
     /// <param name="update">The mutation to apply, e.g. <c>l =&gt; l.Color = "#FF5722"</c>.</param>

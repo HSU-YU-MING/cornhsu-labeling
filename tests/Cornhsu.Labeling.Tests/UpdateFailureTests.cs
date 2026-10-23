@@ -343,6 +343,68 @@ public class UpdateFailureTests
         (await StoredAsync(db, other.Id)).Color.Should().Be("#111111");
     }
 
+    [Theory]
+    [InlineData("Label = null")]
+    [InlineData("Entity = null")]
+    [InlineData("AttachedAt")]
+    public async Task lambda經連結的導覽屬性或欄位動到連結_一樣拒絕_連結原樣(string how)
+    {
+        // 把連結的必填導覽設成 null,EF 偵測時會把它當孤兒刪掉;改 AttachedAt 是改連結的欄位。
+        // 這些不經 context 的 Remove,要先偵測連結才看得出來(最終驗證 R24、R25、R13)
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "t");
+        var links = db.Context.Set<Cornhsu.Labeling.EntityFrameworkCore.LabelLink<TestNote, Guid>>();
+        await links.Include(x => x.Label).Include(x => x.Entity).LoadAsync();
+        var link = links.Local.Single();
+        var attachedAt = link.AttachedAt;
+
+        var act = () => db.Store.UpdateAsync(target.Id, l =>
+        {
+            switch (how)
+            {
+                case "Label = null": link.Label = null!; break;
+                case "Entity = null": link.Entity = null!; break;
+                default: link.AttachedAt = DateTimeOffset.UnixEpoch; break;
+            }
+        });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"*but it removed or changed a link of label {target.Id} (entity {note.Id}). Use DetachAsync instead.");
+        (link.Label, link.Entity, db.Context.Entry(link).State).Should().Be((target, note, EntityState.Unchanged));
+        db.Context.ChangeTracker.DetectChanges();
+        db.Context.Entry(link).State.Should().Be(EntityState.Unchanged);
+        await db.Context.SaveChangesAsync();
+        using var check = db.CreateSecondContext();
+        var stored = await check.Set<Cornhsu.Labeling.EntityFrameworkCore.LabelLink<TestNote, Guid>>().AsNoTracking().SingleAsync();
+        stored.AttachedAt.Should().Be(attachedAt);
+    }
+
+    [Fact]
+    public async Task lambda改了你自己的實體再把它Detach_被拒絕時值也放回去_下一次存檔不會寫出()
+    {
+        // detach 之後重新追蹤時要連值一起放回原值,否則改過的值會在下一次存檔被當成修改寫出去(最終驗證 R10)
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("p");
+        var child = await db.Store.CreateAsync("c", parentId: parent.Id);
+        var note = await db.AddNoteAsync("原標題");
+
+        var act = () => db.Store.UpdateAsync(child.Id, l =>
+        {
+            note.Title = "改過的標題";
+            db.Context.Entry(note).State = EntityState.Detached;
+            l.Parent!.Name = "X";   // 被拒絕
+        });
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        db.Context.Entry(note).State.Should().Be(EntityState.Unchanged);
+        note.Title.Should().Be("原標題");
+        await db.Context.SaveChangesAsync();
+        using var check = db.CreateSecondContext();
+        (await check.Notes.AsNoTracking().SingleAsync(n => n.Id == note.Id)).Title.Should().Be("原標題");
+    }
+
     [Fact]
     public async Task lambda刪掉或新增連結_拒絕_連結原樣()
     {

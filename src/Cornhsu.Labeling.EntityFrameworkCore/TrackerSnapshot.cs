@@ -285,7 +285,13 @@ internal sealed class TrackerSnapshot
     {
         if (entry.State == EntityState.Detached)
         {
-            entry.State = EntityState.Unchanged;   // detach 之後 EF 已經沒有原值,只能照目前的值重新追蹤
+            // 重新追蹤同一個項目:它還記得 detach 前的原值,值被改過的話一起放回,否則下一次偵測會把改過的值當成修改
+            entry.State = EntityState.Unchanged;
+            if (revertValues)
+            {
+                entry.CurrentValues.SetValues(entry.OriginalValues);
+                entry.State = EntityState.Unchanged;
+            }
             return;
         }
         if (entry.State != EntityState.Unchanged)
@@ -293,6 +299,7 @@ internal sealed class TrackerSnapshot
             if (revertValues)
                 entry.CurrentValues.SetValues(entry.OriginalValues);
             entry.State = EntityState.Unchanged;
+            ReconnectSeveredReferences(entry);
             return;
         }
         if (!revertValues) return;
@@ -300,6 +307,29 @@ internal sealed class TrackerSnapshot
         if (entry.State == EntityState.Unchanged) return;
         entry.CurrentValues.SetValues(entry.OriginalValues);
         entry.State = EntityState.Unchanged;
+    }
+
+    /// <summary>
+    /// 把被剪斷的參考導覽接回去:例如 lambda 把連結的 <c>Label</c> 設成 null,EF 偵測時把連結當孤兒標成刪除。
+    /// 狀態放回 Unchanged 之後,CLR 上的導覽仍是 null,下一次偵測又會當成孤兒刪掉;外鍵沒變、
+    /// 主體也還在追蹤器裡時,把導覽設回那個主體。只在失敗路徑、只對狀態被改過的項目做。
+    /// </summary>
+    private static void ReconnectSeveredReferences(EntityEntry entry)
+    {
+        foreach (var reference in entry.References)
+        {
+            if (reference.CurrentValue is not null
+                || reference.Metadata is not Microsoft.EntityFrameworkCore.Metadata.INavigation { IsOnDependent: true } navigation)
+                continue;
+            var keyValues = navigation.ForeignKey.Properties.Select(p => entry.Property(p.Name).CurrentValue).ToArray();
+            if (keyValues.Any(v => v is null)) continue;
+            var principalKey = navigation.ForeignKey.PrincipalKey.Properties;
+            var principal = entry.Context.ChangeTracker.Entries()
+                .FirstOrDefault(e => e.Metadata == navigation.TargetEntityType
+                    && principalKey.Select((p, i) => Equals(e.Property(p.Name).CurrentValue, keyValues[i])).All(x => x));
+            if (principal is not null)
+                reference.CurrentValue = principal.Entity;
+        }
     }
 
     private static void RemoveFromChildren(ChangeTracker tracker, HashSet<Label> strays)

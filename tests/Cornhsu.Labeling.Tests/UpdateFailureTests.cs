@@ -505,6 +505,27 @@ public class UpdateFailureTests
     }
 
     [Fact]
+    public async Task lambda刪掉你自己帶有連結的實體_照常成功_連結隨串聯刪除()
+    {
+        // 你自己的實體不歸 store 管,lambda 裡刪掉照樣存;它的連結要在存檔時才串聯刪除。
+        // EF 預設在 Remove 的當下就把追蹤中的連結標成刪除,那樣看起來就是「lambda 刪了連結」而被拒絕——
+        // 所以 lambda 執行期間把串聯延到存檔時(最終驗證 D3)
+        using var db = new TestDb();
+        var target = await db.Store.CreateAsync("t");
+        await db.Store.CreateAsync("o");
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "o");   // 連結在追蹤器裡
+
+        await db.Store.UpdateAsync(target.Id, l => { l.Color = "#111111"; db.Context.Remove(note); });
+
+        db.Context.ChangeTracker.CascadeDeleteTiming.Should().Be(Microsoft.EntityFrameworkCore.ChangeTracking.CascadeTiming.Immediate);
+        using var check = db.CreateSecondContext();
+        (await check.Notes.AsNoTracking().AnyAsync(n => n.Id == note.Id)).Should().BeFalse();
+        (await check.Set<Cornhsu.Labeling.EntityFrameworkCore.LabelLink<TestNote, Guid>>().AsNoTracking().CountAsync()).Should().Be(0);
+        (await StoredAsync(db, target.Id)).Color.Should().Be("#111111");
+    }
+
+    [Fact]
     public async Task 消費端呼叫前自己刪掉的標籤_UpdateAsync存檔時連結照常串聯刪除_串聯時機設定原樣保留()
     {
         // lambda 執行期間暫時改了串聯時機;消費端自己在呼叫前做的刪除不受影響,設定也要放回去

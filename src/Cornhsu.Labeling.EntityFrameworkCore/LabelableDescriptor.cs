@@ -195,7 +195,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         if (match == LabelMatch.All && groups.Count > MaxAllGroupsInSql)
         {
             var matched = await MatchAllInMemoryAsync(db, groups, ct).ConfigureAwait(false);
-            return WithLargeListsAsOneParameter(matched.Count > MaxIdsPerQuery && EfParameterForKeys is not null,
+            return WithLargeListsAsOneParameter(db, matched.Count > MaxIdsPerQuery && EfParameterForKeys is not null,
                 asOneParameter => db.Set<LabelLink<TEntity, TKey>>()
                     .Where(ValuesContain(matched, nameof(LabelLink<TEntity, TKey>.EntityId), EfParameterForKeys, asOneParameter))
                     .Select(l => l.Entity)
@@ -205,7 +205,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         var lists = match == LabelMatch.Any || groups.Count == 1
             ? new List<List<Guid>> { groups.SelectMany(g => g).Distinct().ToList() }
             : groups.Select(g => g.ToList()).ToList();
-        return WithLargeListsAsOneParameter(
+        return WithLargeListsAsOneParameter(db,
             EfParameterLookup.ForGuidList is not null && lists.Any(ids => ids.Count > MaxIdsPerQuery),
             asOneParameter => BuildEntityQuery(db, lists, asOneParameter));
     }
@@ -218,7 +218,7 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> groups, CancellationToken ct)
     {
         var union = groups.SelectMany(g => g).Distinct().ToList();
-        var pairs = await WithLargeListsAsOneParameter(
+        var pairs = await WithLargeListsAsOneParameter(db,
                 EfParameterLookup.ForGuidList is not null && union.Count > MaxIdsPerQuery,
                 asOneParameter => db.Set<LabelLink<TEntity, TKey>>()
                     .Where(ValuesContain(union, nameof(LabelLink<TEntity, TKey>.LabelId), EfParameterLookup.ForGuidList, asOneParameter))
@@ -253,24 +253,13 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
     }
 
     /// <summary>
-    /// 有超過 <see cref="MaxIdsPerQuery"/> 個值的集合時,先試著以 <c>EF.Parameter</c> 把整個集合當成一個參數送出(見 <see cref="ValuesContain{TValue}"/>)。
-    /// 那要資料庫能拆 JSON 陣列:SQL Server 的相容性層級低於 130 時沒有 OPENJSON,EF 會在翻譯時拋例外。
-    /// 先翻譯一次看看,翻不出來就退回 EF 的預設做法(EF 9 在那裡是內嵌常數、EF 10 是一個值一個參數),跟 1.1.0 一樣。
+    /// 有超過 <see cref="MaxIdsPerQuery"/> 個值的集合時,以 <c>EF.Parameter</c> 把整個集合當成一個參數送出(見 <see cref="ValuesContain{TValue}"/>)。
+    /// 那要資料庫能拆 JSON 陣列:SQL Server 的相容性層級低於 130 時沒有 OPENJSON,EF 會在翻譯時拋例外;
+    /// 能不能由 <see cref="EfParameterLookup.CanSendAsOneParameter"/> 試翻一個很小的查詢判斷(依設定快取),
+    /// 不能就退回 EF 的預設做法(EF 9 在那裡是內嵌常數、EF 10 少量時一個值一個參數、多了也內嵌常數),跟 1.1.0 一樣。
     /// </summary>
-    private static IQueryable<T> WithLargeListsAsOneParameter<T>(bool large, Func<bool, IQueryable<T>> build)
-    {
-        if (!large) return build(false);
-        var query = build(true);
-        try
-        {
-            query.ToQueryString();
-            return query;
-        }
-        catch (InvalidOperationException)
-        {
-            return build(false);
-        }
-    }
+    private static IQueryable<T> WithLargeListsAsOneParameter<T>(DbContext db, bool large, Func<bool, IQueryable<T>> build)
+        => build(large && EfParameterLookup.CanSendAsOneParameter(db));
 
     /// <summary>EF.Parameter 封閉成 <c>List&lt;TKey&gt;</c> 的版本(實體主鍵清單用);EF Core 8 上是 null。</summary>
     private static readonly MethodInfo? EfParameterForKeys = EfParameterLookup.Find(typeof(EF), typeof(List<TKey>));

@@ -43,6 +43,11 @@ public interface ILabelStore
     /// (unless the context has automatic change detection turned off, in which case the store does not look at your
     /// entities). Changes made through your own entities' navigation properties — adding to a collection, or to a
     /// many-to-many relationship, or pointing a reference at a new entity — are not rolled back.
+    /// Changes other code makes to tracked entities while the update is awaiting the database cannot be told apart
+    /// from the update's own, so they are rolled back with it if it fails. With the context's
+    /// <c>CascadeDeleteTiming</c> set to <c>Never</c>, deleting an entity that has links inside <paramref name="update"/>
+    /// throws when the update saves. Calling SaveChanges yourself inside <paramref name="update"/>, or attaching labels
+    /// to the context there, is not covered by any of the above.
     /// </summary>
     /// <param name="labelId">Label id.</param>
     /// <param name="update">The mutation to apply, e.g. <c>l =&gt; l.Color = "#FF5722"</c>.</param>

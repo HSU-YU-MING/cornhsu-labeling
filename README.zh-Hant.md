@@ -193,7 +193,9 @@ await store.DeleteAsync(review.Id);    // 各型別的連結由 cascade delete �
 都會拋 `InvalidOperationException`、什麼都不存——請改用 `UpdateAsync`、`RenameAsync`、`CreateAsync`、`DeleteAsync`、
 `AttachAsync` 或 `DetachAsync`。lambda 對你自己的實體做的修改會跟著這次更新一起存。更新被拒絕時,store 會撤掉屬性值的修改,
 以及經 context 加入、移除、Detach 的實體;但經你自己實體的導覽屬性做的修改(集合加入、多對多、把參考指向新的實體)
-不在還原範圍,context 關掉自動偵測變更時 store 也完全不看你的實體。
+不在還原範圍,context 關掉自動偵測變更時 store 也完全不看你的實體。另外幾個邊角:更新等資料庫回應的期間,別的程式碼對追蹤中實體的修改
+分不出來,會被當成這次更新的一起撤掉;`CascadeDeleteTiming = Never` 時,lambda 裡刪掉帶有連結的實體會拋例外;
+lambda 裡自己呼叫 `SaveChanges`、或自己 Attach 標籤,都不在保證範圍內。
 
 ## 不用 DI 容器
 

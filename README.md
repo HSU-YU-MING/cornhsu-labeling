@@ -206,7 +206,10 @@ lambda makes to your own entities are saved along with the update. When the upda
 store rolls back property values and entities added, removed or detached through the context — but not
 changes made through your entities' navigation properties (adding to a collection or a many-to-many
 relationship, or pointing a reference at a new entity), and nothing of yours at all when the context has
-automatic change detection turned off.
+automatic change detection turned off. A few more edges: changes other code makes to tracked
+entities while the update awaits the database count as the update's own and are rolled back with it;
+with `CascadeDeleteTiming = Never`, deleting an entity that has links inside the lambda throws; and
+calling `SaveChanges` or attaching labels yourself inside the lambda is not covered.
 
 ## Without a DI container
 

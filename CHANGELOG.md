@@ -149,7 +149,8 @@ EF Core 10 上幾萬筆的批次與大子樹不再撞參數上限等。
   就拋例外(SQL Server 上 EF 10 參數太多時自己改用一個 JSON 參數,不會拋)。`QueryByLabelsAsync` 回傳的是讓你接著組合的 `IQueryable`,只能是一條 SQL、不能分批往返,
   所以 Id 超過 1,000 個時改用 `EF.Parameter`(EF Core 9 起才有)把整個集合當成一個參數送出(SQLite 的 `json_each`、
   SQL Server 的 `OPENJSON`)。SQL Server 的相容性層級低於 130(`UseCompatibilityLevel(120)` 等)時沒有 `OPENJSON`,
-  EF 翻譯不出來;store 會先翻譯一次確認,翻不出來就退回 EF 的預設做法(EF 9 內嵌常數、EF 10 一個值一個參數),
+  EF 翻譯不出來;store 會先試翻一個小查詢確認,翻不出來就退回 EF 的預設做法(EF 9 內嵌常數;EF 10 數量少時一個值一個參數,
+  會超過 SQL Server 的參數上限時也改成內嵌常數),
   結果跟 1.1.0 相同。EF Core 8 沒有 `EF.Parameter`,一律照它自己的預設。數量少時照舊用 EF 的預設。
   這也是 1.1.0 + EF 10 就有的問題。
 - **`LabelMatch.All` 給很多名稱時照常完成**。以前每個名稱一個 `IN` 子查詢、全部以 `AND` 接起來,SQL Server 在二十個名稱左右

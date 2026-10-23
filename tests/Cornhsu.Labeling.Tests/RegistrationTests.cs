@@ -393,4 +393,16 @@ public class RegistrationTests
         field.Should().NotBeNull();
         field!.GetRequiredCustomModifiers().Should().Contain(typeof(System.Runtime.CompilerServices.IsVolatile));
     }
+
+    [Fact]
+    public void AutoCreateLabels的欄位也是volatile_跟封存旗標一致()
+    {
+        // AutoCreateLabels 封存後仍可隨時改,而且由共用 registry 的每個 store(可能在不同執行緒上)讀:
+        // 可見性跟封存旗標同一個處理
+        var field = typeof(LabelRegistry).GetField("_autoCreateLabels",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        field.Should().NotBeNull();
+        field!.GetRequiredCustomModifiers().Should().Contain(typeof(System.Runtime.CompilerServices.IsVolatile));
+    }
 }

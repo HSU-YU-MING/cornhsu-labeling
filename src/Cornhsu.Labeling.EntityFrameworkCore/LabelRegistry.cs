@@ -13,6 +13,7 @@ public sealed class LabelRegistry
 {
     private readonly List<ILabelableOperations> _descriptors = new();
     private volatile bool _sealed;   // 全 App 單例:封存與之後的註冊、設定可能在不同執行緒上
+    private volatile bool _autoCreateLabels = true;   // 封存後仍可隨時改,由共用 registry 的每個 store 讀:可見性跟 _sealed 一樣處理
     private string _labelTableName = "Label";
     private string _linkTablePrefix = "LabelLink_";
 
@@ -51,7 +52,11 @@ public sealed class LabelRegistry
     /// It does not affect the EF model, so it can be changed at any time, also after the registry is sealed;
     /// the change applies to every store that shares the registry.
     /// </summary>
-    public bool AutoCreateLabels { get; set; } = true;
+    public bool AutoCreateLabels
+    {
+        get => _autoCreateLabels;
+        set => _autoCreateLabels = value;
+    }
 
     /// <summary>
     /// Registers a labelable type. The key type is inferred from <see cref="ILabelable{TKey}"/>,

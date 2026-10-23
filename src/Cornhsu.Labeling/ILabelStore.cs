@@ -128,7 +128,11 @@ public interface ILabelStore
     /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<LabelHit>> FindByLabelAsync(string labelName, bool includeDescendants = true, CancellationToken ct = default);
 
-    /// <summary>Single-type, strongly typed query: returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.</summary>
+    /// <summary>
+    /// Single-type, strongly typed query: returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.
+    /// As with <see cref="QueryByLabelsAsync{T}"/>, the returned query reflects the labels as they were when you called
+    /// this method (the name and its descendants are resolved during the call); for current results, call it again.
+    /// </summary>
     /// <typeparam name="T">A registered labelable type.</typeparam>
     /// <param name="labelName">Label name.</param>
     /// <param name="includeDescendants">Whether entities matched via descendant labels are included.</param>
@@ -155,6 +159,10 @@ public interface ILabelStore
     /// returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.
     /// With <see cref="LabelMatch.All"/> and more than eight names, the store first works out which entities carry
     /// every label and returns a query over those entities' keys (one condition per name does not scale in SQL).
+    /// The returned query reflects the labels and label links as they were when you called this method:
+    /// names (and their descendants) are resolved during the call, and with <see cref="LabelMatch.All"/> and more
+    /// than eight names so is the set of matching entities, so links attached or detached afterwards do not change
+    /// what it returns. For current results, call the method again rather than enumerating an earlier query again.
     /// </summary>
     /// <typeparam name="T">A registered labelable type.</typeparam>
     /// <param name="labelNames">Label names.</param>

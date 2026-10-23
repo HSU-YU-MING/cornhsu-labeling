@@ -362,6 +362,10 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 比對規則交給資料庫的 collation。1.1.0 是一次撈出全部標籤、在記憶體比對名稱;benchmark 上兩者的差異在量測雜訊之內,
 LocalDB 上 50 個、100 個名稱分別約 7 ms、9 ms,與 1.1.0 相當。
 
+`LabelMatch.All` 給超過 8 個名稱時換一種查法:每個名稱一個條件的寫法撐不住(SQL Server 在二十個名稱左右就拋 8623),
+所以 store 一次撈出這些標籤的 (實體, 標籤) 配對、在記憶體算出每個名稱都有的實體,`QueryByLabelsAsync` 回傳以那些實體主鍵查詢的查詢。
+LocalDB 上 250 個名稱約 35–50 ms、500 個約 60–80 ms。這組實體在呼叫當下就定了(見「限制」)。
+
 `UpdateAsync` 每次呼叫會把 DbContext 追蹤中的所有項目看過兩遍:lambda 執行前一遍(開著自動偵測時先整個偵測一次,
 再記下每一項的狀態),更新被擋下或存檔失敗時才還原得回去;lambda 執行後一遍,才分得出 lambda 改了什麼,
 經 `Parent` 或 `Children` 導覽屬性換的父標籤也才檢查得到循環。所以成本跟 context 追蹤的實體數成正比:開著自動偵測時,
@@ -374,6 +378,9 @@ LocalDB 上 50 個、100 個名稱分別約 7 ms、9 ms,與 1.1.0 相當。
 - **實體主鍵支援 `int`/`long`/`Guid`/`string` 等具備相等運算子的型別,可在同一個 App 混用**;但 `Label` 本體的主鍵固定是 `Guid`(它是套件自有的表)。
 - **`LabelHit.EntityId` 是 `object`**——跨型別查詢的命中可能來自不同主鍵型別,這是泛型主鍵的必要代價;用 `EntityIdAs<TKey>()` 取回強型別。
 - **跨型別查詢是 N 次查詢**(N = 已註冊型別數)。樸素版先行,實測有瓶頸再優化成 `UNION ALL`。
+- **`QueryByLabelAsync`/`QueryByLabelsAsync` 回傳的查詢反映的是呼叫當下的標籤連結**:名稱(含子孫)在呼叫時就解析好,
+  `LabelMatch.All` 給超過 8 個名稱時連符合的實體也在呼叫時算好,之後貼上或撕掉的連結不會改變這個查詢的結果。
+  要最新結果請重新呼叫,不要重複列舉先前拿到的查詢。
 - **`LabelRegistry` 必須全 App 單例。** EF Core 的 model cache 以 DbContext 型別為 key;同一個 DbContext 型別拿到不同 registry 會拿到錯的快取 model 且不會報錯。`AddLabeling` 已自動註冊為 Singleton。多租戶各自不同的可標記型別不支援(需自訂 `IModelCacheKeyFactory`)。
 - **標籤名稱全域唯一,包含跨階層**——「工作/雜項」和「生活/雜項」不能各有一個叫「雜項」的子標籤。
   這是刻意取捨:整個 API 以名稱定址(`AttachAsync`、`FindByLabelAsync` 都吃名稱字串),

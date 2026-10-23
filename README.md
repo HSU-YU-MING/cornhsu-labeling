@@ -394,6 +394,13 @@ database's collation decides what matches. Against 1.1.0, which read every label
 matched names in memory, the benchmark shows no difference beyond noise, and 50 or 100 names on
 LocalDB take about 7 and 9 ms, as in 1.1.0.
 
+`LabelMatch.All` with more than eight names is matched differently: one condition per name does not
+scale (SQL Server gives up with error 8623 at around twenty names), so the store reads the
+(entity, label) pairs for those labels in one query, works out in memory which entities carry every
+name, and `QueryByLabelsAsync` returns a query over those entities' keys. On LocalDB, 250 names take
+about 35–50 ms and 500 names about 60–80 ms. That set of entities is fixed when you call the method
+(see Limitations).
+
 `UpdateAsync` looks at everything the DbContext is tracking, twice per call: once before your lambda
 runs (a full change detection, when it is on, plus a note of each entry's state), so it can roll the
 changes back if the update is rejected or the save fails, and once after, so it can tell what the
@@ -414,6 +421,11 @@ on the same machine. A context that tracks few entities — for example one that
   types, which is the unavoidable cost of generic keys. Use `EntityIdAs<TKey>()` to get it typed.
 - **A cross-type query is N queries** (N = number of registered types). The naive version ships
   first; it will be optimized into a `UNION ALL` if measurement ever shows a bottleneck.
+- **The query `QueryByLabelAsync` / `QueryByLabelsAsync` return reflects the label links as of the
+  call.** Names (and their descendants) are resolved when you call the method, and with
+  `LabelMatch.All` and more than eight names so is the set of matching entities, so links attached or
+  detached afterwards do not change what that query returns. For current results, call the method
+  again rather than enumerating an earlier query again.
 - **`LabelRegistry` must be an application-wide singleton.** EF Core's model cache is keyed by
   DbContext type, so handing the same DbContext type a different registry gives you a wrongly
   cached model — silently, with no error. `AddLabeling` already registers it as a Singleton.

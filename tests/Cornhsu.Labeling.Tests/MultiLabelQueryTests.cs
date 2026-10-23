@@ -240,6 +240,26 @@ public class MultiLabelQueryTests
             .Should().BeEquivalentTo(new[] { "full", "almost" });
     }
 
+    [Fact]
+    public async Task All給很多名稱_回傳的查詢反映呼叫當下的連結_之後的增刪不影響()
+    {
+        // 超過 8 個名稱時,符合的實體在呼叫當下就算好了:之後貼上全部標籤的新實體不會出現,
+        // 之後撕掉全部標籤的實體照樣在結果裡。要最新結果請重新呼叫
+        using var db = new TestDb();
+        var names = Enumerable.Range(0, 9).Select(i => $"s{i}").ToList();
+        var before = await db.AddNoteAsync("before");
+        await db.Store.AttachAsync(before, names);
+
+        var query = await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All);
+        var later = await db.AddNoteAsync("later");
+        await db.Store.AttachAsync(later, names);
+        await db.Store.DetachAsync(before, names);
+
+        (await query.Select(n => n.Title).ToListAsync()).Should().Equal("before");
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All)).Select(n => n.Title).ToListAsync())
+            .Should().Equal(new[] { "later" }, "重新呼叫才看得到最新的連結");
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

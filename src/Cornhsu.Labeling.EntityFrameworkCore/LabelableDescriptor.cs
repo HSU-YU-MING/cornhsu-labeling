@@ -195,11 +195,10 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         if (match == LabelMatch.All && groups.Count > MaxAllGroupsInSql)
         {
             var matched = await MatchAllInMemoryAsync(db, groups, ct).ConfigureAwait(false);
+            // 直接以實體主鍵查實體,不再經連結表:結果是呼叫當下的快照(之後撕掉全部標籤的實體照樣在結果裡),
+            // 跟「符合的實體在呼叫當下就算好了」一致,文件好講清楚
             return WithLargeListsAsOneParameter(db, matched.Count > MaxIdsPerQuery && EfParameterForKeys is not null,
-                asOneParameter => db.Set<LabelLink<TEntity, TKey>>()
-                    .Where(ValuesContain(matched, nameof(LabelLink<TEntity, TKey>.EntityId), EfParameterForKeys, asOneParameter))
-                    .Select(l => l.Entity)
-                    .Distinct());
+                asOneParameter => db.Set<TEntity>().Where(EntityKeyIn(db, matched, asOneParameter)));
         }
 
         var lists = match == LabelMatch.Any || groups.Count == 1
@@ -275,6 +274,28 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
     /// </summary>
     private static Expression<Func<LabelLink<TEntity, TKey>, bool>> LabelIdIn(List<Guid> ids, bool asOneParameter)
         => ValuesContain(ids, nameof(LabelLink<TEntity, TKey>.LabelId), EfParameterLookup.ForGuidList, asOneParameter);
+
+    /// <summary>
+    /// 組 <c>e =&gt; keys.Contains(EF.Property&lt;TKey&gt;(e, 主鍵))</c>。主鍵取自 model 裡連結外鍵指向的那個屬性,
+    /// 不直接用 <see cref="ILabelable{TKey}.Id"/>:實體的主鍵可以叫別的名字,Id 以明確介面實作或 [NotMapped] 接過去,EF 翻譯不了。
+    /// 連結的外鍵只有 <see cref="LabelLink{TEntity, TKey}.EntityId"/> 一欄,所以主鍵必然是單一欄位,一個 Contains 就夠。
+    /// </summary>
+    private static Expression<Func<TEntity, bool>> EntityKeyIn(DbContext db, List<TKey> keys, bool asOneParameter)
+    {
+        var keyProperty = db.Model.FindEntityType(typeof(LabelLink<TEntity, TKey>))!
+            .FindNavigation(nameof(LabelLink<TEntity, TKey>.Entity))!
+            .ForeignKey.PrincipalKey.Properties.Single();
+        var entity = Expression.Parameter(typeof(TEntity), "e");
+        Expression list = Expression.Field(
+            Expression.Constant(new StrongBox<List<TKey>>(keys)), nameof(StrongBox<List<TKey>>.Value));
+        if (asOneParameter && keys.Count > MaxIdsPerQuery && EfParameterForKeys is not null)
+            list = Expression.Call(EfParameterForKeys, list);
+        var key = Expression.Call(
+            typeof(EF), nameof(EF.Property), new[] { typeof(TKey) }, entity, Expression.Constant(keyProperty.Name));
+        var body = Expression.Call(
+            typeof(Enumerable), nameof(Enumerable.Contains), new[] { typeof(TKey) }, list, key);
+        return Expression.Lambda<Func<TEntity, bool>>(body, entity);
+    }
 
     /// <summary>組 <c>l =&gt; values.Contains(l.{property})</c>;值超過 <see cref="MaxIdsPerQuery"/> 個、而且 <paramref name="asOneParameter"/> 時包一層 EF.Parameter。</summary>
     private static Expression<Func<LabelLink<TEntity, TKey>, bool>> ValuesContain<TValue>(

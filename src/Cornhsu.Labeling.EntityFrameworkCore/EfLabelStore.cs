@@ -616,14 +616,14 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
             foreach (var index in chunk)
             {
                 var name = names[index];
-                var position = index;
+                var position = index - chunk[0];   // 批內的相對位置:查詢形狀只看這一批有幾個名稱,最多 100 種
                 var part = _db.Set<Label>()
                     .Where(l => l.Name == name)
                     .Select(l => new NameHit { Position = EF.Constant(position), Id = l.Id });
                 query = query is null ? part : query.Concat(part);
             }
             foreach (var hit in await query!.ToListAsync(ct).ConfigureAwait(false))
-                (matched[hit.Position] ??= new List<Guid>()).Add(hit.Id);
+                (matched[chunk[0] + hit.Position] ??= new List<Guid>()).Add(hit.Id);
         }
 
         var roots = new List<List<Guid>>(names.Count);

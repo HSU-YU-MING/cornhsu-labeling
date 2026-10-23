@@ -264,6 +264,41 @@ public class MultiLabelQueryTests
             .Should().BeEquivalentTo(includeDescendants ? new[] { "viaChild", "viaRoot" } : new[] { "viaRoot" });
     }
 
+    /// <summary>記下送出的 SQL 文字。</summary>
+    private sealed class CommandRecorder : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public readonly List<string> Texts = new();
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            lock (Texts) Texts.Add(command.CommandText);
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    [Fact]
+    public async Task 名稱解析的查詢形狀只看這一批有幾個名稱_不看它在第幾批()
+    {
+        // 每段帶的序號是批內的相對位置:第 2 批的 50 個名稱跟只有 50 個名稱時是同一條 SQL,
+        // EF 與資料庫的查詢快取最多只有 100 種形狀,不會隨名稱總數一直長出新的
+        var recorder = new CommandRecorder();
+        using var db = new TestDb(null, recorder);
+        var names = Enumerable.Range(0, 150).Select(i => $"r{i:D3}").ToList();
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, names);
+
+        recorder.Texts.Clear();
+        await db.Store.FindByLabelsAsync(names.Take(50), includeDescendants: false);
+        var alone = recorder.Texts[0];
+        recorder.Texts.Clear();
+        await db.Store.FindByLabelsAsync(names, includeDescendants: false);   // 第 1 批 100 個、第 2 批 50 個
+
+        recorder.Texts[1].Should().Be(alone);
+    }
+
     [Fact]
     public async Task 名稱超過一批_跨批的名稱照樣對回自己的位置()
     {

@@ -64,7 +64,8 @@ var labelsByNote = await store.GetLabelsOfManyAsync(visibleNotes);
 foreach (var n in visibleNotes)
     Render(n, labelsByNote[n]);                              // every entity has an entry (possibly empty)
 
-// Bulk attach ("select several, tag them all urgent"; idempotent, one SaveChanges):
+// Bulk attach ("select several, tag them all urgent"; idempotent; all the links go in one
+// SaveChanges, after any labels it has to auto-create, which are saved one at a time):
 var selectedNotes = visibleNotes;
 await store.AttachManyAsync(selectedNotes, new[] { "urgent" });
 
@@ -81,6 +82,62 @@ Check(await notes.CountAsync() == 1, "QueryByLabelAsync<Note> 是可以繼續組
 Check(urgent.Count == 1 && await either.CountAsync() == 1, "LabelMatch.All / Any 都吃得到");
 Check(labelsByNote.Count == visibleNotes.Count, "GetLabelsOfManyAsync:每個 entity 都有一格");
 Check(todoIds.Single() == todo.Id, "EntityIdAs<int>() 拿得到 TodoItem 的 int 主鍵");
+
+// ---- README「Quick start」2. Register 之後那段:型別鍵與表名 ----
+// README 說連結表名 = LabelLink_ + 型別鍵、型別鍵預設取類別名(所以改類別名 = 改表名),可用 typeKey 釘住。
+var diRegistry = scope.ServiceProvider.GetRequiredService<LabelRegistry>();
+Check(diRegistry.Descriptors.Single(d => d.ClrType == typeof(Note)).TypeKey == nameof(Note)
+      && db.Model.FindEntityType(typeof(LabelLink<Note, Guid>))!.GetTableName() == diRegistry.LinkTablePrefix + nameof(Note)
+      && db.Model.FindEntityType(typeof(Label))!.GetTableName() == diRegistry.LabelTableName,
+      "型別鍵預設是類別名;連結表名 = LinkTablePrefix + 型別鍵,Label 表名 = LabelTableName");
+var pinned = new LabelRegistry().Labelable<Note>(n => n.Title, typeKey: "Note");
+Check(pinned.Descriptors.Single().TypeKey == "Note", "typeKey 參數釘得住型別鍵");
+
+// ---- README「Managing labels」----
+// Curated labels: create them up front with a color, an icon and a parent
+var work   = await store.CreateAsync("work", color: "#FF5722", icon: "briefcase");
+var review = await store.CreateAsync("review", parentId: work.Id);   // a child of "work"
+await store.AttachAsync(note, "review");                    // README 沒有這行:讓下面的「含子孫」真的找得到東西
+await store.RenameAsync(review.Id, "peer review");          // links store the Id, so they are untouched
+await store.UpdateAsync(work.Id, l => l.SortOrder = 1);     // any field but Id; a new ParentId is checked for cycles
+var found  = await store.FindAsync("work");                 // null when there is no such label
+var labels = await store.GetAllAsync();                     // ordered by SortOrder, then Name
+
+// Queries include descendant labels by default: "work" also finds what is tagged "peer review"
+var underWork = await store.FindByLabelAsync("work");
+var onlyWork  = await store.FindByLabelAsync("work", includeDescendants: false);
+
+await store.DetachAsync(note, "urgent");                    // names that are not attached are ignored
+var noteLabels = await store.GetLabelsOfAsync(note);
+
+// Tag cloud: label Id → number of links across every type. Labels used nowhere have no entry.
+var counts = await store.GetUsageCountsAsync();
+var uses   = counts.GetValueOrDefault(work.Id);
+
+// README 沒有這段:先驗「還有子標籤時拋例外」,再掛一筆伴生資料(README「Extending Label」),
+// 清掉追蹤器,讓下面的刪除只能靠資料庫的 cascade,而不是 EF 追蹤器代勞。
+var deleteParentThrew = false;
+try { await store.DeleteAsync(work.Id); } catch (InvalidOperationException) { deleteParentThrew = true; }
+db.Add(new LabelMeta { LabelId = review.Id });
+await db.SaveChangesAsync();
+db.ChangeTracker.Clear();
+
+await store.DeleteAsync(review.Id);    // links on every type are removed by cascade;
+                                       // throws while the label still has children
+
+Check(found?.Id == work.Id && labels.Any(l => l.Name == "peer review"), "CreateAsync / RenameAsync / FindAsync / GetAllAsync");
+Check(underWork.Any(h => h.EntityClrType == typeof(Note)) && onlyWork.Count == 0,
+      "includeDescendants 預設含子孫標籤,傳 false 只看標籤本身");
+Check(noteLabels.All(l => l.Name != "urgent"), "DetachAsync 撕得掉");
+Check(!counts.ContainsKey(work.Id) && uses == 0, "GetUsageCountsAsync:沒被用到的標籤不在字典裡");
+Check(deleteParentThrew, "DeleteAsync:還有子標籤時拋例外");
+Check(await store.FindAsync("peer review") is null
+      && !await db.Set<LabelMeta>().AnyAsync(m => m.LabelId == review.Id)
+      && (await store.GetLabelsOfAsync(note)).All(l => l.Name != "peer review"),
+      "DeleteAsync:標籤、它的連結與伴生表那一列都由 cascade 清掉");
+
+// ---- README「Without a DI container」----
+await WithoutDiContainer();
 
 // ---- README「curated label set」:r.AutoCreateLabels = false ----
 // 用另一個 DbContext 型別跑,因為 EF 的 model cache 以 DbContext 型別為 key
@@ -117,6 +174,41 @@ catch (InvalidOperationException)
 Check(threw, "AutoCreateLabels = false:未知標籤拋例外,而不是默默建一個");
 
 Console.WriteLine("✔ README 教的每一個呼叫都編譯並執行過了");
+
+// README「Without a DI container」:中間那段照抄;前後是讓它真的跑得起來的鷹架。
+// 這裡沿用 AppDbContext 而且註冊的型別與 DI 那份完全相同,EF 依 DbContext 型別快取的 model
+// 才會是同一個形狀(README 說全 App 只能有一個 registry,就是在講這件事)。
+static async Task WithoutDiContainer()
+{
+    using var conn = new SqliteConnection("DataSource=:memory:");
+    conn.Open();
+    var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(conn).Options;
+
+    var registry = new LabelRegistry();
+    registry.Labelable<Note>(n => n.Title);
+    registry.Labelable<TodoItem>(t => t.Content);
+
+    using var db = new AppDbContext(options, registry);
+    var store = LabelStoreFactory.Create(db, registry);   // optional third argument: ILogger<ILabelStore>
+
+    db.Database.EnsureCreated();
+    var note = new Note { Id = Guid.NewGuid(), Title = "No container" };
+    db.Add(note);
+    await db.SaveChangesAsync();
+    await store.AttachAsync(note, "paper");
+    Check((await store.FindByLabelAsync("paper")).Count == 1, "LabelStoreFactory.Create:不經 DI 容器也能用");
+
+    // README:Create 會像 AddLabeling 一樣封存 registry——之後註冊型別、改表名或前綴會拋例外,AutoCreateLabels 照樣可改
+    var typeRejected = false;
+    try { registry.Labelable<Note>(); }
+    catch (InvalidOperationException ex) when (ex.Message.Contains("sealed")) { typeRejected = true; }
+    var prefixRejected = false;
+    try { registry.LinkTablePrefix = "Other_"; }
+    catch (InvalidOperationException ex) when (ex.Message.Contains("sealed")) { prefixRejected = true; }
+    registry.AutoCreateLabels = false;
+    Check(typeRejected && prefixRejected && !registry.AutoCreateLabels,
+        "LabelStoreFactory.Create:建完 store 之後型別與表名已封存,AutoCreateLabels 照樣可改");
+}
 
 static void Render(Note note, IReadOnlyList<Label> labels)
     => Console.WriteLine($"  {note.Title}: {string.Join(", ", labels.Select(l => l.Name))}");

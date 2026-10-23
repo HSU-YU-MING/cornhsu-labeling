@@ -10,10 +10,10 @@ jobs:
       contents: write  # 建 GitHub Release
       id-token: write   # Trusted Publishing:允許 GitHub 簽發 OIDC token 與 NuGet 交換臨時金鑰
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0          # SourceLink 需要完整 git 歷史
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 8.0.x
 

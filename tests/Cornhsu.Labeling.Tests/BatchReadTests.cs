@@ -38,6 +38,52 @@ public class BatchReadTests
     }
 
     [Fact]
+    public async Task 批次讀_名稱大小寫混雜時_順序與逐筆讀一致()
+    {
+        // 排序交給資料庫:不管 collation 分不分大小寫,批次讀與逐筆讀都要排得一樣
+        using var db = new TestDb();
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "c-lower", "B-upper", "a-lower");
+
+        var single = await db.Store.GetLabelsOfAsync(note);
+        var batch = (await db.Store.GetLabelsOfManyAsync(new[] { note }))[note];
+
+        batch.Select(l => l.Name).Should().Equal(single.Select(l => l.Name));
+    }
+
+    [Fact]
+    public async Task 批次讀_不分大小寫的collation上_依資料庫排序_與逐筆讀一致()
+    {
+        using var db = new CaseInsensitiveDb();
+        var note = await db.AddNoteAsync();
+        var other = await db.AddNoteAsync("other");
+        await db.Store.AttachAsync(note, "c-lower", "B-upper", "a-lower");
+        await db.Store.AttachAsync(other, "B-upper", "a-lower");
+
+        var single = await db.Store.GetLabelsOfAsync(note);
+        var map = await db.Store.GetLabelsOfManyAsync(new[] { note, other });
+
+        single.Select(l => l.Name).Should().Equal("a-lower", "B-upper", "c-lower");
+        map[note].Select(l => l.Name).Should().Equal("a-lower", "B-upper", "c-lower");
+        map[other].Select(l => l.Name).Should().Equal("a-lower", "B-upper");
+        (await db.Store.GetAllAsync()).Select(l => l.Name).Should().Equal("a-lower", "B-upper", "c-lower");
+    }
+
+    [Fact]
+    public async Task 批次讀_SortOrder優先於名稱()
+    {
+        using var db = new TestDb();
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, "甲", "乙", "丙");
+        await db.Store.UpdateAsync((await db.Store.FindAsync("丙"))!.Id, l => l.SortOrder = -1);
+
+        var batch = (await db.Store.GetLabelsOfManyAsync(new[] { note }))[note];
+
+        batch.First().Name.Should().Be("丙");
+        batch.Select(l => l.Id).Should().Equal((await db.Store.GetLabelsOfAsync(note)).Select(l => l.Id));
+    }
+
+    [Fact]
     public async Task 批次讀_int主鍵型別也可用()
     {
         using var db = new TestDb();

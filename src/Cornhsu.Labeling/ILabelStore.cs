@@ -31,7 +31,23 @@ public interface ILabelStore
     /// <summary>
     /// Updates a label's fields (color, sort order, parent — and the name too, following the same
     /// rules as <see cref="RenameAsync"/>). Changes made to the Label inside <paramref name="update"/>
-    /// are persisted; changing the parent is checked for cycles.
+    /// are persisted; changing the parent — through <see cref="Label.ParentId"/> or through the
+    /// <see cref="Label.Parent"/> / <see cref="Label.Children"/> navigations — is checked for cycles.
+    /// The update may change only this label, apart from moving other labels through those navigations:
+    /// changing any other field of another label, adding a label, deleting or detaching a label (this one included),
+    /// changing another label's tracking state, or adding or removing a link throws <see cref="InvalidOperationException"/>.
+    /// Changes the update makes to your own entities are saved along with it.
+    /// If the update is rejected or cannot be saved, the changes made inside <paramref name="update"/>
+    /// are rolled back so a later save of the same context does not persist them: everything on labels and links,
+    /// and on your own entities their property values plus entities you add, remove or detach through the context
+    /// (unless the context has automatic change detection turned off, in which case the store does not look at your
+    /// entities). Changes made through your own entities' navigation properties — adding to a collection, or to a
+    /// many-to-many relationship, or pointing a reference at a new entity — are not rolled back.
+    /// Changes other code makes to tracked entities while the update is awaiting the database cannot be told apart
+    /// from the update's own, so they are rolled back with it if it fails. With the context's
+    /// <c>CascadeDeleteTiming</c> set to <c>Never</c>, deleting an entity that has links inside <paramref name="update"/>
+    /// throws when the update saves. Calling SaveChanges yourself inside <paramref name="update"/>, or attaching labels
+    /// to the context there, is not covered by any of the above.
     /// </summary>
     /// <param name="labelId">Label id.</param>
     /// <param name="update">The mutation to apply, e.g. <c>l =&gt; l.Color = "#FF5722"</c>.</param>
@@ -61,9 +77,10 @@ public interface ILabelStore
 
     /// <summary>
     /// Bulk attach: applies the same set of labels to many entities (the "select several rows, tag them all
-    /// as urgent" case). Labels are resolved once, existing links are read in one query, and everything is
-    /// saved in a single SaveChanges. Idempotent — combinations that already exist are skipped.
-    /// Behaviour for labels that do not exist matches <see cref="AttachAsync{T}(T, string[])"/> (governed by AutoCreateLabels).
+    /// as urgent" case). Labels are resolved once, existing links are read in one query, and the new links
+    /// are saved in a single SaveChanges. Idempotent — combinations that already exist are skipped.
+    /// Behaviour for labels that do not exist matches <see cref="AttachAsync{T}(T, string[])"/> (governed by AutoCreateLabels):
+    /// labels that have to be auto-created are each saved first, on their own, so the operation as a whole is not atomic.
     /// </summary>
     /// <typeparam name="T">A registered labelable type.</typeparam>
     /// <param name="entities">Target entities (all must already exist in the database); an empty sequence returns immediately.</param>
@@ -111,7 +128,11 @@ public interface ILabelStore
     /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<LabelHit>> FindByLabelAsync(string labelName, bool includeDescendants = true, CancellationToken ct = default);
 
-    /// <summary>Single-type, strongly typed query: returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.</summary>
+    /// <summary>
+    /// Single-type, strongly typed query: returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.
+    /// As with <see cref="QueryByLabelsAsync{T}"/>, the returned query reflects the labels as they were when you called
+    /// this method (the name and its descendants are resolved during the call); for current results, call it again.
+    /// </summary>
     /// <typeparam name="T">A registered labelable type.</typeparam>
     /// <param name="labelName">Label name.</param>
     /// <param name="includeDescendants">Whether entities matched via descendant labels are included.</param>
@@ -136,6 +157,12 @@ public interface ILabelStore
     /// <summary>
     /// Multi-label single-type strongly typed query with the same semantics as <see cref="FindByLabelsAsync"/>;
     /// returns an <see cref="IQueryable{T}"/> you can keep composing Where/OrderBy/Skip onto.
+    /// With <see cref="LabelMatch.All"/> and more than eight names, the store first works out which entities carry
+    /// every label and returns a query over those entities' keys (one condition per name does not scale in SQL).
+    /// The returned query reflects the labels and label links as they were when you called this method:
+    /// names (and their descendants) are resolved during the call, and with <see cref="LabelMatch.All"/> and more
+    /// than eight names so is the set of matching entities, so links attached or detached afterwards do not change
+    /// what it returns. For current results, call the method again rather than enumerating an earlier query again.
     /// </summary>
     /// <typeparam name="T">A registered labelable type.</typeparam>
     /// <param name="labelNames">Label names.</param>

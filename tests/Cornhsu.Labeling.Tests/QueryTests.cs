@@ -39,7 +39,7 @@ public class QueryTests
         var hit = (await db.Store.FindByLabelAsync("論文")).Single();
 
         var act = () => hit.EntityIdAs<int>();
-        act.Should().Throw<InvalidCastException>().WithMessage("*Guid*Int32*");
+        act.Should().Throw<InvalidCastException>().WithMessage("the key of this hit (TestNote) is Guid, not Int32.");
     }
 
     [Fact] // #6

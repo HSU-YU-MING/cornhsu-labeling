@@ -9,15 +9,22 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers the labeling system: builds and seals a <see cref="LabelRegistry"/> (Singleton),
     /// and registers <see cref="ILabelStore"/> (Scoped) backed by <typeparamref name="TContext"/>.
+    /// Once sealed, what goes into the EF model is fixed, so register the types and set
+    /// <see cref="LabelRegistry.LabelTableName"/> and <see cref="LabelRegistry.LinkTablePrefix"/> inside
+    /// <paramref name="configure"/>; <see cref="LabelRegistry.AutoCreateLabels"/> can still be changed later.
     /// </summary>
     /// <typeparam name="TContext">Your application's DbContext.</typeparam>
     /// <param name="services">The DI service collection.</param>
-    /// <param name="configure">Callback that registers the labelable types.</param>
+    /// <param name="configure">Callback that registers the labelable types and sets the registry's properties.</param>
     public static IServiceCollection AddLabeling<TContext>(
         this IServiceCollection services,
         Action<LabelRegistry> configure)
         where TContext : DbContext
     {
+        // 先檢查參數:services 為 null 時不能等 configure 跑完、registry 封存之後才由 DI 拋
+        if (services is null) throw new ArgumentNullException(nameof(services));
+        if (configure is null) throw new ArgumentNullException(nameof(configure));
+
         var registry = new LabelRegistry();
         configure(registry);
         registry.Seal();

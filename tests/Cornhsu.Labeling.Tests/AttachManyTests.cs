@@ -1,13 +1,36 @@
 using Cornhsu.Labeling.EntityFrameworkCore;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace Cornhsu.Labeling.Tests;
 
-/// <summary>AttachManyAsync:批次貼標(標籤解析一次、既有連結一次查詢、單次 SaveChanges)。</summary>
+/// <summary>
+/// AttachManyAsync:批次貼標(標籤解析一次、既有連結一次查詢、連結在一次 SaveChanges 寫入;
+/// 要自動建立的標籤在那之前各自存檔)。
+/// </summary>
 public class AttachManyTests
 {
+    [Fact]
+    public async Task 批次貼標_連結在一次存檔寫入_要自動建立的標籤各自先存一次()
+    {
+        var saves = new SaveCounter();
+        using var db = new TestDb(null, saves);
+        var a = await db.AddNoteAsync("a");
+        var b = await db.AddNoteAsync("b");
+        var c = await db.AddNoteAsync("c");
+        await db.Store.CreateAsync("既有");
+
+        saves.Count = 0;
+        await db.Store.AttachManyAsync(new[] { a, b }, new[] { "既有", "新一", "新二" });
+        saves.Count.Should().Be(3, "兩個要自動建立的標籤各存一次,所有連結再一起存一次:整個操作不是原子的");
+
+        saves.Count = 0;
+        await db.Store.AttachManyAsync(new[] { c }, new[] { "既有", "新一" });
+        saves.Count.Should().Be(1, "標籤都已存在時,只有寫連結那一次");
+    }
+
     [Fact]
     public async Task 批次貼標_多實體多標籤一次完成()
     {
@@ -93,5 +116,18 @@ public class AttachManyTests
 
         var actItem = () => db.Store.AttachManyAsync(new[] { a, null! }, new[] { "x" });
         await actItem.Should().ThrowAsync<ArgumentException>();
+    }
+
+    /// <summary>數成功的 SaveChanges 次數。</summary>
+    private sealed class SaveCounter : SaveChangesInterceptor
+    {
+        public int Count { get; set; }
+
+        public override ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            Count++;
+            return ValueTask.FromResult(result);
+        }
     }
 }

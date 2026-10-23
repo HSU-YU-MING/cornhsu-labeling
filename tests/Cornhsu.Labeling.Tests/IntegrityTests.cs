@@ -84,7 +84,8 @@ public class IntegrityTests
 
         var act = () => db.Store.DeleteAsync(parent.Id);
         await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*still has children*");
+            .WithMessage("label '論文' still has children; delete or move them first. " +
+                         "(The database also blocks this via a Restrict foreign key.)");
 
         (await db.Store.FindAsync("論文")).Should().NotBeNull("父標籤不應被刪掉");
     }

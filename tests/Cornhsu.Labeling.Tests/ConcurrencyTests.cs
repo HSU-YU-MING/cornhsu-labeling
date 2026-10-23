@@ -60,4 +60,94 @@ public class ConcurrencyTests
 
         (await db.Store.FindAsync("論文"))!.ConcurrencyStamp.Should().Be(label.ConcurrencyStamp);
     }
+
+    [Fact]
+    public async Task UpdateAsync的lambda經導覽屬性搬移別的標籤_那個標籤的戳記也輪換_拿舊戳記的一方撞並發例外()
+    {
+        // 搬移也是透過 store 的修改:不輪換的話,另一邊拿舊戳記搬同一個標籤會默默蓋掉這次的搬移
+        using var db = new TestDb();
+        var p = await db.Store.CreateAsync("p");
+        var q = await db.Store.CreateAsync("q");
+        var x = await db.Store.CreateAsync("x");
+        var stamp = x.ConcurrencyStamp;
+
+        using var other = db.CreateSecondContext();
+        var otherStore = Cornhsu.Labeling.EntityFrameworkCore.LabelStoreFactory.Create(other, db.Registry);
+        await other.Set<Label>().FirstAsync(l => l.Id == x.Id);   // 先讀進來:舊戳記
+
+        await db.Store.UpdateAsync(p.Id, l => l.Children.Add(x));   // 一號經 p 的 Children 把 x 搬到 p 底下
+        x.ConcurrencyStamp.Should().NotBe(stamp);
+
+        var act = () => otherStore.UpdateAsync(x.Id, l => l.ParentId = q.Id);
+        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+        using var check = db.CreateSecondContext();
+        (await check.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == x.Id)).ParentId.Should().Be(p.Id);
+    }
+
+    [Fact]
+    public async Task 被lambda搬移的標籤帶著消費端的未存修改_撞並發例外後一樣重讀_重試就成功()
+    {
+        // 跟目標標籤同一個規則:被搬的標籤是這次呼叫要寫的,衝突時一律重讀,連你對它的未存修改也丟掉;
+        // 不重讀的話追蹤器留著舊戳記,重試永遠撞同一個衝突(第五輪審查 E4)
+        using var db = new TestDb();
+        var q = await db.Store.CreateAsync("q");
+        var x = await db.Store.CreateAsync("x");
+        using (var other = db.CreateSecondContext())
+        {
+            var otherStore = Cornhsu.Labeling.EntityFrameworkCore.LabelStoreFactory.Create(other, db.Registry);
+            await otherStore.UpdateAsync(x.Id, l => l.Color = "#000000");   // 別人先改了 x
+        }
+        x.Icon = "consumer";   // 你自己對 x 的未存修改(手上的戳記已經舊了)
+
+        var act = () => db.Store.UpdateAsync(q.Id, l => l.Children.Add(x));
+        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+
+        x.Color.Should().Be("#000000", "衝突的被搬標籤重讀成資料庫的值");
+        x.Icon.Should().BeNull("重讀會丟掉你對它的未存修改,跟目標標籤一樣");
+        await db.Store.UpdateAsync(q.Id, l => l.Children.Add(x));
+        using var check = db.CreateSecondContext();
+        (await check.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == x.Id)).ParentId.Should().Be(q.Id);
+    }
+
+    [Fact]
+    public async Task UpdateAsync的lambda自己載入別的標籤再搬移_那個標籤的戳記也輪換()
+    {
+        // 呼叫前不在追蹤器裡、lambda 自己查出來再搬的標籤,一樣是透過 store 的修改
+        using var db = new TestDb();
+        var p = await db.Store.CreateAsync("p");
+        var x = await db.Store.CreateAsync("x");
+        var stamp = x.ConcurrencyStamp;
+        db.Context.ChangeTracker.Clear();
+
+        await db.Store.UpdateAsync(p.Id, l => l.Children.Add(db.Context.Set<Label>().Single(y => y.Name == "x")));
+
+        using var check = db.CreateSecondContext();
+        var stored = await check.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == x.Id);
+        stored.ParentId.Should().Be(p.Id);
+        stored.ConcurrencyStamp.Should().NotBe(stamp);
+    }
+
+    [Fact]
+    public async Task UpdateAsync的lambda搬移別的標籤時撞並發例外_那個標籤也重讀_重試就成功()
+    {
+        // 被搬的標籤呼叫前沒有未存修改,store 可以替消費端重讀;不重讀的話追蹤器留著舊戳記,重試永遠撞同一個衝突
+        using var db = new TestDb();
+        var p = await db.Store.CreateAsync("p");
+        var x = await db.Store.CreateAsync("x");
+
+        using (var other = db.CreateSecondContext())
+        {
+            var otherStore = Cornhsu.Labeling.EntityFrameworkCore.LabelStoreFactory.Create(other, db.Registry);
+            await otherStore.UpdateAsync(x.Id, l => l.Color = "#000000");   // 別人先改了 x
+        }
+
+        var act = () => db.Store.UpdateAsync(p.Id, l => l.Children.Add(x));
+        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+        x.Color.Should().Be("#000000", "衝突的標籤重讀成資料庫的值");
+
+        await db.Store.UpdateAsync(p.Id, l => l.Children.Add(x));
+        using var check = db.CreateSecondContext();
+        var stored = await check.Set<Label>().AsNoTracking().SingleAsync(l => l.Id == x.Id);
+        (stored.ParentId, stored.Color).Should().Be((p.Id, "#000000"));
+    }
 }

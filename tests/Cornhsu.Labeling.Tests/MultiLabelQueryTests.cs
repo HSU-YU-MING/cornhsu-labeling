@@ -76,6 +76,33 @@ public class MultiLabelQueryTests
     }
 
     [Fact]
+    public async Task 三個標籤_All要三個都有_Any有一個就算()
+    {
+        // 兩個名稱時 All 只有「第一組為基底 + 一個交集」;第三組起的每一組都要各自再收斂一次
+        using var db = new TestDb();
+        var all3 = await db.AddNoteAsync("三個都有");
+        var two = await db.AddNoteAsync("缺第三個");
+        var thirdOnly = await db.AddNoteAsync("只有第三個");
+        await db.AddNoteAsync("都沒有");
+        await db.Store.AttachAsync(all3, "論文", "急件", "待讀");
+        await db.Store.AttachAsync(two, "論文", "急件");
+        await db.Store.AttachAsync(thirdOnly, "待讀");
+        var names = new[] { "論文", "急件", "待讀" };
+
+        (await db.Store.FindByLabelsAsync(names, LabelMatch.All)).Should().ContainSingle()
+            .Which.DisplayName.Should().Be("三個都有");
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All)).Select(n => n.Id).ToListAsync())
+            .Should().Equal(all3.Id);
+
+        // 以下是對照組:Any 的語意本身已由 Any_命中任一標籤都撈到_同實體不重複 涵蓋,
+        // 這裡只確認同一份資料換成 Any 時,第三組照樣算數(「只有第三個」也要撈到)
+        (await db.Store.FindByLabelsAsync(names, LabelMatch.Any)).Select(h => h.DisplayName)
+            .Should().BeEquivalentTo(new[] { "三個都有", "缺第三個", "只有第三個" });
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.Any)).Select(n => n.Id).ToListAsync())
+            .Should().BeEquivalentTo(new[] { all3.Id, two.Id, thirdOnly.Id });
+    }
+
+    [Fact]
     public async Task 空名稱集合_回傳空結果()
     {
         using var db = new TestDb();
@@ -136,6 +163,34 @@ public class MultiLabelQueryTests
     }
 
     [Fact]
+    public async Task 省略match與includeDescendants時_預設是Any且包含子孫()
+    {
+        using var db = new TestDb();
+        var parent = await db.Store.CreateAsync("論文");
+        await db.Store.CreateAsync("文獻回顧", parentId: parent.Id);
+        var viaChild = await db.AddNoteAsync("只貼子標籤");
+        var urgentOnly = await db.AddNoteAsync("只貼急件");
+        await db.Store.AttachAsync(viaChild, "文獻回顧");
+        await db.Store.AttachAsync(urgentOnly, "急件");
+        var names = new[] { "論文", "急件" };
+
+        // 參數預設值會被編譯進呼叫端,屬公開介面:預設若變成 All,結果是空的;
+        // 預設若變成不含子孫,只貼子標籤的那筆會不見
+        (await db.Store.FindByLabelsAsync(names)).Select(h => h.DisplayName)
+            .Should().BeEquivalentTo(new[] { "只貼子標籤", "只貼急件" });
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(names)).Select(n => n.Id).ToListAsync())
+            .Should().BeEquivalentTo(new[] { viaChild.Id, urgentOnly.Id });
+    }
+
+    [Fact]
+    public void LabelMatch的數值是對外契約()
+    {
+        // 列舉值會被編譯進消費端的組件:對調數值等於讓沒重新編譯的呼叫端 All/Any 互換
+        ((int)LabelMatch.Any).Should().Be(0);
+        ((int)LabelMatch.All).Should().Be(1);
+    }
+
+    [Fact]
     public async Task null名稱集合_拋出ArgumentNullException()
     {
         using var db = new TestDb();
@@ -145,5 +200,167 @@ public class MultiLabelQueryTests
 
         var actQuery = () => db.Store.QueryByLabelsAsync<TestNote>(null!);
         await actQuery.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    /// <summary>數送出的 SQL 指令。</summary>
+    private sealed class CommandCounter : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public int Count;
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref Count);
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    [Theory]
+    [InlineData(20)]
+    [InlineData(250)]
+    [InlineData(500)]
+    public async Task All給很多名稱_照常完成(int count)
+    {
+        // 每個名稱一個 IN 子查詢、全部以 AND 接起來的寫法,SQL Server 在二十個名稱左右就拋 8623
+        // (查詢處理器資源不足),1.1.0 也一樣。名稱多時改走另一種查法,結果要一樣
+        using var db = new TestDb();
+        var names = Enumerable.Range(0, count).Select(i => $"m{i:D3}").ToList();
+        var full = await db.AddNoteAsync("full");
+        var almost = await db.AddNoteAsync("almost");
+        await db.Store.AttachAsync(full, names);
+        await db.Store.AttachAsync(almost, names.Skip(1));
+
+        (await db.Store.FindByLabelsAsync(names, LabelMatch.All)).Select(h => h.DisplayName).Should().Equal("full");
+        var query = await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All);
+        (await query.CountAsync()).Should().Be(1);
+        (await query.Where(n => n.Title.StartsWith("f")).Select(n => n.Title).ToListAsync()).Should().Equal("full");
+        (await db.Store.FindByLabelsAsync(names.Skip(1), LabelMatch.All)).Select(h => h.DisplayName)
+            .Should().BeEquivalentTo(new[] { "full", "almost" });
+    }
+
+    [Fact]
+    public async Task All給很多名稱_回傳的查詢反映呼叫當下的連結_之後的增刪不影響()
+    {
+        // 超過 8 個名稱時,符合的實體在呼叫當下就算好了:之後貼上全部標籤的新實體不會出現,
+        // 之後撕掉全部標籤的實體照樣在結果裡。要最新結果請重新呼叫
+        using var db = new TestDb();
+        var names = Enumerable.Range(0, 9).Select(i => $"s{i}").ToList();
+        var before = await db.AddNoteAsync("before");
+        await db.Store.AttachAsync(before, names);
+
+        var query = await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All);
+        var later = await db.AddNoteAsync("later");
+        await db.Store.AttachAsync(later, names);
+        await db.Store.DetachAsync(before, names);
+
+        (await query.Select(n => n.Title).ToListAsync()).Should().Equal("before");
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(names, LabelMatch.All)).Select(n => n.Title).ToListAsync())
+            .Should().Equal(new[] { "later" }, "重新呼叫才看得到最新的連結");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task All給很多名稱_含子孫與重疊的子樹_語意不變(bool includeDescendants)
+    {
+        // 名稱多到改走另一種查法時,子孫展開與「祖先、子孫兩個名稱同時給」的語意都要跟少數名稱時一樣
+        using var db = new TestDb();
+        var root = await db.Store.CreateAsync("root");
+        await db.Store.CreateAsync("child", parentId: root.Id);
+        var others = Enumerable.Range(0, 10).Select(i => $"x{i}").ToList();
+        var viaChild = await db.AddNoteAsync("viaChild");     // child + 其他:含子孫時 root 那組也成立
+        var viaRoot = await db.AddNoteAsync("viaRoot");       // root + 其他:child 那組不成立
+        await db.Store.AttachAsync(viaChild, others.Append("child"));
+        await db.Store.AttachAsync(viaRoot, others.Append("root"));
+        var names = others.Append("root").Append("child").ToList();   // 12 個名稱
+
+        var hits = await db.Store.FindByLabelsAsync(names, LabelMatch.All, includeDescendants);
+
+        hits.Select(h => h.DisplayName).Should().BeEquivalentTo(includeDescendants ? new[] { "viaChild" } : Array.Empty<string>());
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(names.Where(n => n != "child"), LabelMatch.All, includeDescendants))
+            .Select(n => n.Title).ToListAsync())
+            .Should().BeEquivalentTo(includeDescendants ? new[] { "viaChild", "viaRoot" } : new[] { "viaRoot" });
+    }
+
+    /// <summary>記下送出的 SQL 文字。</summary>
+    private sealed class CommandRecorder : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public readonly List<string> Texts = new();
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            lock (Texts) Texts.Add(command.CommandText);
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    [Fact]
+    public async Task 名稱解析的查詢形狀只看這一批有幾個名稱_不看它在第幾批()
+    {
+        // 每段帶的序號是批內的相對位置:第 2 批的 50 個名稱跟只有 50 個名稱時是同一條 SQL,
+        // EF 與資料庫的查詢快取最多只有 100 種形狀,不會隨名稱總數一直長出新的
+        var recorder = new CommandRecorder();
+        using var db = new TestDb(null, recorder);
+        var names = Enumerable.Range(0, 150).Select(i => $"r{i:D3}").ToList();
+        var note = await db.AddNoteAsync();
+        await db.Store.AttachAsync(note, names);
+
+        recorder.Texts.Clear();
+        await db.Store.FindByLabelsAsync(names.Take(50), includeDescendants: false);
+        var alone = recorder.Texts[0];
+        recorder.Texts.Clear();
+        await db.Store.FindByLabelsAsync(names, includeDescendants: false);   // 第 1 批 100 個、第 2 批 50 個
+
+        recorder.Texts[1].Should().Be(alone);
+    }
+
+    [Fact]
+    public async Task 名稱超過一批_跨批的名稱照樣對回自己的位置()
+    {
+        // 名稱解析一條查詢最多 100 個名稱;第 0 與第 150 個落在不同批,All 要每一個名稱都對回自己的位置才成立
+        using var db = new TestDb();
+        var names = Enumerable.Range(0, 151).Select(i => $"n{i:D3}").ToList();
+        var full = await db.AddNoteAsync("full");
+        var almost = await db.AddNoteAsync("almost");
+        await db.Store.AttachAsync(full, names);
+        await db.Store.AttachAsync(almost, names.Take(150));
+
+        (await db.Store.FindByLabelsAsync(names, LabelMatch.All)).Select(h => h.DisplayName).Should().Equal("full");
+        (await (await db.Store.QueryByLabelsAsync<TestNote>(new[] { names[0], names[150] }.Concat(names.Skip(1).Take(149)), LabelMatch.All))
+            .Select(n => n.Title).ToListAsync()).Should().Equal("full");
+        (await db.Store.FindByLabelsAsync(names.Append("missing"), LabelMatch.All)).Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task 名稱很多時_名稱解析一次查回_往返次數不隨名稱數增加(bool includeDescendants)
+    {
+        // 名稱交給資料庫比對,但不是一個名稱一次往返:全部名稱以 UNION ALL 一次查回(每列帶名稱的序號),
+        // 含子孫時再讀一次階層,之後每個註冊型別一次
+        var counter = new CommandCounter();
+        using var db = new TestDb(null, counter);
+        var notes = new List<TestNote>();
+        for (var i = 0; i < 50; i++)
+            notes.Add(await db.AddNoteAsync($"n{i:D2}"));
+        for (var i = 0; i < 50; i++)
+            await db.Store.AttachAsync(notes[i], $"label{i:D2}");
+        var names = Enumerable.Range(0, 50).Select(i => $"label{i:D2}").Append("missing").ToList();
+
+        counter.Count = 0;
+        var hits = await db.Store.FindByLabelsAsync(names, LabelMatch.Any, includeDescendants);
+
+        hits.Should().HaveCount(50);
+        counter.Count.Should().Be((includeDescendants ? 2 : 1) + 2, "名稱一次、階層一次(含子孫時)、兩個註冊型別各一次");
+
+        (await db.Store.FindByLabelsAsync(new[] { "label00", "missing" }, LabelMatch.All, includeDescendants))
+            .Should().BeEmpty("All 下缺一個名稱就是空的");
+        (await db.Store.FindByLabelsAsync(new[] { "label01", "label00" }, LabelMatch.Any, includeDescendants))
+            .Select(h => h.DisplayName).Should().BeEquivalentTo(new[] { "n00", "n01" });
     }
 }

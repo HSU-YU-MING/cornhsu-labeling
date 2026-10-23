@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- EF 版本矩陣(CI 用):-p:CornhsuTestTfm=net10.0 -p:CornhsuEfVersion=10.0.*
-         真的引用 EF 9/10 跑同一套測試,不是只換 SDK -->
+    <!-- EF 版本矩陣(CI 用):-p:CornhsuTestTfm=net10.0 -p:CornhsuEfVersion=10.0.* -p:CornhsuDiVersion=10.0.*
+         真的引用 EF 9/10 跑同一套測試,不是只換 SDK(少了 DI 那個旗標會 NU1605 還原失敗) -->
     <CornhsuTestTfm Condition="'$(CornhsuTestTfm)' == ''">net8.0</CornhsuTestTfm>
     <!-- ⚠ 這個值必須等於 src 的相依樓地板(EntityFrameworkCore.Relational 8.0.11)。
          它的意義是「測我們對外承諾的最低版本」—— CI 矩陣另外用 9.0.* / 10.0.* 測更新的線。

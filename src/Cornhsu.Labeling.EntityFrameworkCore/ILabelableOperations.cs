@@ -22,14 +22,14 @@ internal interface ILabelableOperations : ILabelableDescriptor
     /// <summary>統計這個型別對每個標籤的使用次數。</summary>
     Task<IReadOnlyDictionary<Guid, int>> CountUsageAsync(DbContext db, CancellationToken ct);
 
-    /// <summary>為實體補上尚未存在的連結(冪等;不呼叫 SaveChanges)。</summary>
-    Task AddMissingLinksAsync(DbContext db, ILabelable entity, IReadOnlyList<Label> labels, CancellationToken ct);
+    /// <summary>為實體補上尚未存在的連結(冪等;不呼叫 SaveChanges)。新加的連結記進 <paramref name="undo"/>。</summary>
+    Task AddMissingLinksAsync(DbContext db, ILabelable entity, IReadOnlyList<Label> labels, TrackerSnapshot undo, CancellationToken ct);
 
-    /// <summary>批次版:為多個實體補上尚未存在的連結,既有連結一次查詢(冪等;不呼叫 SaveChanges)。</summary>
-    Task AddMissingLinksManyAsync(DbContext db, IReadOnlyList<ILabelable> entities, IReadOnlyList<Label> labels, CancellationToken ct);
+    /// <summary>批次版:為多個實體補上尚未存在的連結,既有連結一次查詢(冪等;不呼叫 SaveChanges)。新加的連結記進 <paramref name="undo"/>。</summary>
+    Task AddMissingLinksManyAsync(DbContext db, IReadOnlyList<ILabelable> entities, IReadOnlyList<Label> labels, TrackerSnapshot undo, CancellationToken ct);
 
-    /// <summary>移除實體與指定標籤之間的連結(不呼叫 SaveChanges)。</summary>
-    Task RemoveLinksAsync(DbContext db, ILabelable entity, IReadOnlyCollection<Guid> labelIds, CancellationToken ct);
+    /// <summary>移除實體與指定標籤之間的連結(不呼叫 SaveChanges)。移除前的狀態記進 <paramref name="undo"/>。</summary>
+    Task RemoveLinksAsync(DbContext db, ILabelable entity, IReadOnlyCollection<Guid> labelIds, TrackerSnapshot undo, CancellationToken ct);
 
     /// <summary>取得實體目前貼著的所有標籤。</summary>
     Task<IReadOnlyList<Label>> GetLabelsAsync(DbContext db, ILabelable entity, CancellationToken ct);
@@ -42,6 +42,7 @@ internal interface ILabelableOperations : ILabelableDescriptor
         DbContext db, IReadOnlyList<ILabelable> entities, CancellationToken ct);
 
     /// <summary>建立「貼著指定標籤的實體」查詢;群組語意同 <see cref="QueryHitsAsync"/>。
-    /// 實際回傳 <c>IQueryable&lt;TEntity&gt;</c>。</summary>
-    IQueryable CreateQueryByLabels(DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match);
+    /// 實際回傳 <c>IQueryable&lt;TEntity&gt;</c>。All 的群組很多時會先查一次資料庫,所以是非同步的。</summary>
+    Task<IQueryable> CreateQueryByLabelsAsync(
+        DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match, CancellationToken ct);
 }

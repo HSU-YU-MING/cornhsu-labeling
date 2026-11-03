@@ -77,9 +77,14 @@ dotnet test tests/Cornhsu.Labeling.Tests -p:CornhsuTestTfm=net10.0 -p:CornhsuEfV
 把 `LabelHit.EntityIdAs<TKey>()` 多加一個必填參數，紅燈直接指到
 `samples/ReadmeSnippets/Program.cs`。
 
+但守門員是手抄的一份：紅燈之後開發者把它修到編得過就綠了，README 照樣寫著舊呼叫。
+所以 CI 的 build job 另外跑 `pwsh scripts/verify-readme-snippets.ps1`：兩份 README 每個 C# 區塊的每一行
+都要照順序出現在 `samples/ReadmeSnippets/Program.cs`（字串內容與註解不算），兩份 README 的程式要彼此一致，
+規則表列的 `CHSU###` 要等於分析器實際宣告的那組。對不上時它會印出 README 的行號與 Program.cs 裡最像的一行。
+
 > 這裡沒有「跑一次工具、跟 README 貼的輸出比對」那種檢查（Parity / XamlContrast 有），
 > 因為這是函式庫、沒有 console 輸出，README 裡一段都沒貼 —— 會走鐘的是 C# 片段，
-> 而讓片段編譯比比對字串更根治，也不需要 `-Update`。
+> 而讓片段編譯比比對字串更根治。兩邊都是人寫的文字，沒有「實際輸出」可以覆寫，所以也沒有 `-Update`。
 
 ## 首次發佈前的一次性設定（已完成）
 

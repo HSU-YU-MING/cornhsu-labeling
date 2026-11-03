@@ -24,6 +24,11 @@ jobs:
       # README 的守門員:README 教的每一個呼叫都在這裡編譯並執行。
       # 改公開 API 的簽章時,tests/ 會被迫跟著改,README 不會——這一步就是那個「被迫」。
       - run: dotnet run --project samples/ReadmeSnippets -c Release
+      # 上一步只證明 ReadmeSnippets 編得過、跑得過;它是手抄的一份,API 改了之後開發者會把它修到綠燈,
+      # README 卻沒人逼它跟著改。這一步檢查兩份 README 的每一行 C# 都照順序出現在 ReadmeSnippets 裡
+      # (字串內容與註解不算)、兩份 README 的程式彼此一致、規則表的診斷代碼等於分析器實際宣告的。
+      # 只讀文字,不建置、不跑程式,所以只在這裡跑一次,不進 EF 矩陣。
+      - run: pwsh scripts/verify-readme-snippets.ps1
 
   # EF Core 9/10:真的引用新版 EF 跑同一套測試(不是只換 SDK)
   test-ef-matrix:

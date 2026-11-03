@@ -45,6 +45,7 @@ D:\擴充功能\nuget\Labeling\cornhsu-labeling\   ← 真正的 git repo 在這
   ```bash
   dotnet run --project samples/MinimalConsole   -c Release   # 抽象是否成立的哨兵
   dotnet run --project samples/ReadmeSnippets   -c Release   # README 的守門員
+  pwsh scripts/verify-readme-snippets.ps1                       # README 的每一行 C# 都在守門員裡
   ```
 
   `ReadmeSnippets` 開頭會印出實際跑到的 runtime 與 EF 組件版本——**這是刻意的**：
@@ -70,6 +71,8 @@ D:\擴充功能\nuget\Labeling\cornhsu-labeling\   ← 真正的 git repo 在這
 - **沒有「跑一次工具、跟 README 貼的輸出比對」的腳本**（XamlContrast 與 Parity 有）。
   這是函式庫、沒有 console 輸出，README 一段輸出都沒貼——會走鐘的是 C# 片段，
   而那個由 `samples/ReadmeSnippets` 用「編譯不過就紅燈」守著，比比對字串更根治。
+  `scripts/verify-readme-snippets.ps1` 再檢查 README 的片段真的就是 ReadmeSnippets 裡編譯的那幾行
+  （比的是兩份手寫的文字，沒有「實際輸出」可貼，所以沒有 `-Update`）。
 - 消費端 **QuillNest** (`D:\應用程式\QuillNest\QuillNest\QuillNest.csproj`) 目前釘在
   `Cornhsu.Labeling.EntityFrameworkCore` **1.1.0**（`QuillNest.csproj:47`，2026-08-27 的 `3efde5c` 從 1.0.0 升上來；
   走公開 nuget.org，不是本機 feed）。
@@ -210,6 +213,14 @@ XML 註解會被打包成 `.xml` 隨 nupkg 出貨，也就是消費端在 IDE �
   **在 README 加一段新的 API 用法時，同時在 ReadmeSnippets 補一行。**
   順帶一提，「加參數」這條路本來就有 XML 註解在守（缺 `<param>` → CS1573，src 先炸）；
   真正沒人守的是**改型別、改回傳、改預設值**那類——那才是這支專案補的洞。
+- **守門員是手抄的一份，紅燈只逼你修守門員。**（2026-11 盤點）
+  上面那個「紅燈指到 Program.cs」之後，開發者把 Program.cs 修到編得過就綠了，README 照樣寫著舊呼叫；
+  README 自己改寫、或中文版自己改寫法，也沒有東西發現。盤點當下就有兩處：README 的 `UseSqlite(cs)`
+  在守門員裡是 `UseSqlite(conn)`，Before 那段兩個類別根本不在裡面。
+  現在由 `scripts/verify-readme-snippets.ps1` 擋（CI 的 build job）：兩份 README 每個 C# 區塊的每一行
+  都要照順序出現在 `Program.cs`（字串內容與註解不算，Program.cs 可以夾鷹架），兩份 README 的程式要彼此一致，
+  規則表的 `CHSU###` 要等於分析器宣告的那組。README 那行單行的 `OnModelCreating` 是由 `CuratedDbContext` 守的
+  （`AppDbContext` 為了一起建伴生表改成了區塊寫法），兩邊的註解都有寫。
 - **守門員只掛在樓地板上等於只驗了承諾的下限。**（#18、commit `fd8c97c`）
   ReadmeSnippets 原本只跑在 EF 8，但 README 承諾 8+，而它教的東西
   （IQueryable 繼續組合、DbContext 建構與 model 快取、`IDesignTimeDbContextFactory`）
@@ -254,16 +265,17 @@ EF Core Sqlite，或加一筆直接引用蓋掉 transitive 版本。
 它是發佈鏈上唯一經手憑證（OIDC 換臨時金鑰）的第三方 action，
 而 tag 可被上游挪動、SHA 不行。上游出新版要更新時，**四個姊妹 repo 一起換新 SHA**。
 
-### 缺口：README 示範輸出沒有自動比對腳本
+### 缺口：README 的散文事實沒有自動比對
 
-XamlContrast 有 `verify-readme-sample.ps1`、Parity 有 `verify-readme-facts.ps1`，
-這裡沒有。C# 片段那一面已由 `samples/ReadmeSnippets` 守住，但 README 裡的
-**效能數據表、測試條數、支援矩陣**這類散文事實仍然只能人工檢查。
+XamlContrast 有 `verify-readme-sample.ps1`、Parity 有 `verify-readme-facts.ps1`；
+這裡的 `verify-readme-snippets.ps1` 只管 C# 片段與診斷代碼（片段的編譯與執行由 `samples/ReadmeSnippets` 負責）。
+README 裡的**效能數據表、支援矩陣、行內 `code` 提到的呼叫**這類散文事實仍然只能人工檢查。
 改到那些數字對得上的東西時，記得回頭看 README。
 
 ## 收尾慣例
 
-- 動了 `src/` → `dotnet test` 必跑；動了公開 API → 連 `MinimalConsole` 與 `ReadmeSnippets` 一起跑。
+- 動了 `src/` → `dotnet test` 必跑；動了公開 API → 連 `MinimalConsole` 與 `ReadmeSnippets` 一起跑，
+  動了 README 的 C# 或 ReadmeSnippets → 跑 `pwsh scripts/verify-readme-snippets.ps1`。
 - 動了公開 API 或行為 → 同步 README（英文）**與** README.zh-Hant，兩份都要改。
 - 動了對外可見文字（例外訊息、analyzer 診斷）→ CHANGELOG 標成 minor 的理由要寫清楚。
 - 新增 analyzer 規則 → `AnalyzerReleases.Unshipped.md` 要跟著寫

@@ -8,7 +8,10 @@
 // 讓「編譯失敗」變成「你動到了對外教的東西,回去看 README」的訊號。
 //
 // 加新的公開 API 而且寫進 README 時,也要在這裡補一行。
-// 唯一沒被守到的是 README 裡 IDesignTimeDbContextFactory 那行宣告以外的散文敘述。
+// 這條不是只靠自覺:scripts/verify-readme-snippets.ps1 會檢查兩份 README 的每一行 C# 都照順序出現在這個檔案裡
+// (字串內容與註解不算,所以中文版翻字串沒關係)。這裡可以多寫鷹架,但 README 的那幾行要一字不差;
+// 改了這裡 README 教的那幾行,兩份 README 也要跟著改,不然 CI 紅燈。
+// 唯一沒被守到的是 README 的散文敘述。
 using Cornhsu.Labeling;
 using Cornhsu.Labeling.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
@@ -23,12 +26,15 @@ Console.WriteLine(
     $"— {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}, " +
     $"EF Core {typeof(DbContext).Assembly.GetName().Version}");
 
-using var conn = new SqliteConnection("DataSource=:memory:");
-conn.Open();
+// README 寫的是 UseSqlite(cs),傳連線字串。具名的共用記憶體資料庫只要還有一條連線開著就一直在,
+// 所以先開一條撐著,DbContext 再用同一個連線字串各自連進去,看到的是同一個資料庫。
+var cs = "DataSource=readme-snippets;Mode=Memory;Cache=Shared";
+using var keepAlive = new SqliteConnection(cs);
+keepAlive.Open();
 
 // ---- README「Quick start」2. Register ----
 var services = new ServiceCollection();
-services.AddDbContext<AppDbContext>(o => o.UseSqlite(conn));
+services.AddDbContext<AppDbContext>(o => o.UseSqlite(cs));
 services.AddLabeling<AppDbContext>(r =>
 {
     r.Labelable<Note>(n => n.Title);
@@ -219,6 +225,13 @@ static void Check(bool ok, string what)
     Console.WriteLine($"  ✔ {what}");
 }
 
+// ---- README「Why it exists」Before ----
+// 反例:README 拿它說明沒有這個套件時,每個模組都得手寫一張連結表。程式不會用到它,
+// 放在這裡只是因為 README 的每一段 C# 都要在這個檔案裡(見檔頭)。
+public class NoteLabel     { public int NoteId; public int LabelId; }
+public class TodoItemLabel { public int TodoItemId; public int LabelId; }
+// ...Nth module, Nth hand-written table, Nth duplicated Attach/Detach/Query code
+
 // ---- README「Quick start」1. Implement ILabelable<TKey> ----
 public class Note : ILabelable<Guid>
 {
@@ -245,6 +258,7 @@ public class LabelMeta
 // ---- README「Quick start」3. One line in your DbContext ----
 // README 把 ApplyLabelModel 與 companion table 分成兩段講,這裡併在同一個 DbContext 裡,
 // 因為要一起建表才驗得到 cascade delete 真的接上了。
+// 也因此 OnModelCreating 是區塊寫法;README 那行單行的 OnModelCreating 由下面的 CuratedDbContext 守著。
 public class AppDbContext : DbContext
 {
     private readonly LabelRegistry _registry;
@@ -269,7 +283,9 @@ public class AppDbContext : DbContext
     }
 }
 
-/// 只為了驗 AutoCreateLabels = false 而存在,README 沒有這個型別。
+/// 為了驗 AutoCreateLabels = false 而存在,README 沒有這個型別。
+/// 但它的形狀就是 README「3. One line in your DbContext」那段:AppDbContext 為了一起建伴生表,
+/// OnModelCreating 改成了區塊寫法,README 那行單行的 OnModelCreating 是由這裡守著的。
 public class CuratedDbContext : DbContext
 {
     private readonly LabelRegistry _registry;

@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### 新增
+
+- **`ReplaceLabelsAsync`:把實體的標籤整組換成指定的這幾個**,標籤編輯器「儲存」鈕需要的動作。
+  過去只有 `AttachAsync` 與 `DetachAsync`,呼叫端要自己算差異,而且兩次存檔之間失敗會留下一半。
+  - 連結的增減在同一次 `SaveChanges` 裡;失敗時撤掉 store 放進追蹤器的變更。
+  - 留下來的連結不重建,`AttachedAt` 不變。
+  - 空清單撕掉全部,標籤本身不會被刪。刻意沒有 `params` 多載:忘了填名稱不該把標籤清光。
+  - 集合沒有變化時不存檔,不會順帶送出 context 裡其他未存的變更。
+  - 不存在的標籤跟 `AttachAsync` 一樣依 `AutoCreateLabels` 處理;要自動建立的標籤會先各自存檔,所以連結存檔失敗時它們仍會留著。
+- 公開型別新增 `ILabelSetReplacer` 與 `LabelStoreExtensions`。**`ILabelStore` 沒有變**,其他實作不必改;
+  沒實作 `ILabelSetReplacer` 的 store 呼叫這個方法時拋 `NotSupportedException`。
+
 ## [2.0.0] — 2026-10-23
 
 **行為的 major,不是 API 的 major。** 公開型別與成員、資料庫 schema、相依樓地板(EF Core 8.0.11、

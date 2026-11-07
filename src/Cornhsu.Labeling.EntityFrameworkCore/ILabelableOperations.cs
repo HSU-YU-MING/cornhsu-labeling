@@ -31,6 +31,18 @@ internal interface ILabelableOperations : ILabelableDescriptor
     /// <summary>移除實體與指定標籤之間的連結(不呼叫 SaveChanges)。移除前的狀態記進 <paramref name="undo"/>。</summary>
     Task RemoveLinksAsync(DbContext db, ILabelable entity, IReadOnlyCollection<Guid> labelIds, TrackerSnapshot undo, CancellationToken ct);
 
+    /// <summary>
+    /// 實體目前實際生效的連結指向哪些標籤:資料庫裡的,加上追蹤器裡還沒存的新增,扣掉還沒存的刪除。
+    /// 只讀不改追蹤器。
+    /// </summary>
+    Task<HashSet<Guid>> GetEffectiveLinkLabelIdsAsync(DbContext db, ILabelable entity, CancellationToken ct);
+
+    /// <summary>
+    /// 讓實體與這些標籤之間都有生效的連結(不呼叫 SaveChanges):沒有的補上,追蹤器裡正等著刪除的取消刪除。
+    /// 動過的項目記進 <paramref name="undo"/>。
+    /// </summary>
+    Task EnsureLinksAsync(DbContext db, ILabelable entity, IReadOnlyList<Label> labels, TrackerSnapshot undo, CancellationToken ct);
+
     /// <summary>取得實體目前貼著的所有標籤。</summary>
     Task<IReadOnlyList<Label>> GetLabelsAsync(DbContext db, ILabelable entity, CancellationToken ct);
 

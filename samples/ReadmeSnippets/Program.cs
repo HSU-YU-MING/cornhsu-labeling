@@ -116,6 +116,14 @@ var onlyWork  = await store.FindByLabelAsync("work", includeDescendants: false);
 await store.DetachAsync(note, "urgent");                    // names that are not attached are ignored
 var noteLabels = await store.GetLabelsOfAsync(note);
 
+await store.AttachAsync(note, "draft");                     // README 沒有這行:讓下面的取代真的有東西要撕
+var linkBeforeReplace = await db.Set<LabelLink<Note, Guid>>().AsNoTracking()
+    .SingleAsync(l => l.EntityId == note.Id && l.Label.Name == "peer review");
+await store.ReplaceLabelsAsync(note, new[] { "paper", "peer review" });   // exactly these labels, in one save
+var replaced = (await store.GetLabelsOfAsync(note)).Select(l => l.Name).ToList();
+var linkAfterReplace = await db.Set<LabelLink<Note, Guid>>().AsNoTracking()
+    .SingleAsync(l => l.EntityId == note.Id && l.Label.Name == "peer review");
+
 // Tag cloud: label Id → number of links across every type. Labels used nowhere have no entry.
 var counts = await store.GetUsageCountsAsync();
 var uses   = counts.GetValueOrDefault(work.Id);
@@ -135,6 +143,9 @@ Check(found?.Id == work.Id && labels.Any(l => l.Name == "peer review"), "CreateA
 Check(underWork.Any(h => h.EntityClrType == typeof(Note)) && onlyWork.Count == 0,
       "includeDescendants 預設含子孫標籤,傳 false 只看標籤本身");
 Check(noteLabels.All(l => l.Name != "urgent"), "DetachAsync 撕得掉");
+Check(replaced.Count == 2 && replaced.Contains("paper") && replaced.Contains("peer review"),
+      "ReplaceLabelsAsync:呼叫之後剛好貼著指定的標籤");
+Check(linkAfterReplace.AttachedAt == linkBeforeReplace.AttachedAt, "ReplaceLabelsAsync:留下的連結保留 AttachedAt");
 Check(!counts.ContainsKey(work.Id) && uses == 0, "GetUsageCountsAsync:沒被用到的標籤不在字典裡");
 Check(deleteParentThrew, "DeleteAsync:還有子標籤時拋例外");
 Check(await store.FindAsync("peer review") is null

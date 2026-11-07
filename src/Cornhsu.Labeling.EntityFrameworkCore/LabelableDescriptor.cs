@@ -137,6 +137,56 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         }
     }
 
+    public async Task<HashSet<Guid>> GetEffectiveLinkLabelIdsAsync(DbContext db, ILabelable entity, CancellationToken ct)
+    {
+        var id = ((TEntity)entity).Id;
+        var stored = await db.Set<LabelLink<TEntity, TKey>>().AsNoTracking()
+            .Where(EntityIdEquals(id))
+            .Select(l => l.LabelId)
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        var effective = new HashSet<Guid>(stored);
+        foreach (var entry in db.ChangeTracker.Entries<LabelLink<TEntity, TKey>>())
+        {
+            if (!EqualityComparer<TKey>.Default.Equals(entry.Entity.EntityId, id)) continue;
+            if (entry.State == EntityState.Added) effective.Add(entry.Entity.LabelId);
+            else if (entry.State == EntityState.Deleted) effective.Remove(entry.Entity.LabelId);
+        }
+        return effective;
+    }
+
+    public async Task EnsureLinksAsync(
+        DbContext db, ILabelable entity, IReadOnlyList<Label> labels, TrackerSnapshot undo, CancellationToken ct)
+    {
+        var id = ((TEntity)entity).Id;
+        var links = db.Set<LabelLink<TEntity, TKey>>();
+
+        foreach (var label in labels)
+        {
+            var existing = await links.FindAsync(new object[] { label.Id, id }, ct).ConfigureAwait(false);
+            if (existing is null)
+            {
+                var link = new LabelLink<TEntity, TKey>
+                {
+                    LabelId = label.Id,
+                    EntityId = id,
+                    AttachedAt = DateTimeOffset.UtcNow,
+                };
+                links.Add(link);
+                undo.Added(link);
+                continue;
+            }
+
+            // 消費端已經標記刪除、還沒存:這個連結在清單裡,就該留下
+            var entry = db.Entry(existing);
+            if (entry.State == EntityState.Deleted)
+            {
+                undo.Capture(entry, withValues: false);
+                entry.State = EntityState.Unchanged;
+            }
+        }
+    }
+
     public async Task<IReadOnlyList<Label>> GetLabelsAsync(DbContext db, ILabelable entity, CancellationToken ct)
         => await db.Set<LabelLink<TEntity, TKey>>()
             .Where(EntityIdEquals(((TEntity)entity).Id))

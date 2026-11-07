@@ -188,6 +188,7 @@ var onlyWork  = await store.FindByLabelAsync("work", includeDescendants: false);
 
 await store.DetachAsync(note, "urgent");                    // names that are not attached are ignored
 var noteLabels = await store.GetLabelsOfAsync(note);
+await store.ReplaceLabelsAsync(note, new[] { "paper", "peer review" });   // exactly these labels, in one save
 
 // Tag cloud: label Id → number of links across every type. Labels used nowhere have no entry.
 var counts = await store.GetUsageCountsAsync();
@@ -196,6 +197,13 @@ var uses   = counts.GetValueOrDefault(work.Id);
 await store.DeleteAsync(review.Id);    // links on every type are removed by cascade;
                                        // throws while the label still has children
 ```
+
+`ReplaceLabelsAsync` is what a tag editor's Save button needs. Afterwards the entity carries exactly the
+labels you listed: the others are detached, missing ones are attached, and links that stay keep their
+`AttachedAt`. All link changes go in one `SaveChanges`, so they apply together or not at all. Labels that
+have to be auto-created are saved first, as with `AttachAsync`, so they remain if saving the links fails.
+An empty list detaches everything, which is why there is no `params` overload: leaving out the names must
+not clear the labels. If the entity already carries exactly these labels, nothing is saved.
 
 `UpdateAsync` changes only the label you pass it. Inside the lambda you may also move other labels
 (through `Parent` or `Children`); changing another label's fields, adding a label, deleting or

@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Cornhsu.Labeling.EntityFrameworkCore;
 
-internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbContext
+internal sealed class EfLabelStore<TContext> : ILabelStore, ILabelSetReplacer where TContext : DbContext
 {
     private readonly TContext _db;
     private readonly LabelRegistry _registry;
@@ -297,6 +297,31 @@ internal sealed class EfLabelStore<TContext> : ILabelStore where TContext : DbCo
 
         var undo = new TrackerSnapshot(_db);
         await SaveOrRestoreAsync(undo, () => descriptor.RemoveLinksAsync(_db, entity, labelIds, undo, ct), ct).ConfigureAwait(false);
+    }
+
+    public async Task ReplaceLabelsAsync<T>(T entity, IEnumerable<string> labelNames, CancellationToken ct = default)
+        where T : class, ILabelable
+    {
+        if (entity is null) throw new ArgumentNullException(nameof(entity));
+        if (labelNames is null) throw new ArgumentNullException(nameof(labelNames));
+
+        var descriptor = _registry.Require<T>();
+        var labels = await GetOrCreateLabelsAsync(labelNames, ct).ConfigureAwait(false);
+
+        // 差異算好才動追蹤器:集合沒有變化就不存檔,不會順帶送出消費端其他未存的變更。
+        // 留下來的連結完全不碰,它們的 AttachedAt 才不會被洗掉。
+        var current = await descriptor.GetEffectiveLinkLabelIdsAsync(_db, entity, ct).ConfigureAwait(false);
+        var wanted = labels.Select(l => l.Id).ToHashSet();
+        var toRemove = current.Where(id => !wanted.Contains(id)).ToList();
+        var toAdd = labels.Where(l => !current.Contains(l.Id)).ToList();
+        if (toRemove.Count == 0 && toAdd.Count == 0) return;
+
+        var undo = new TrackerSnapshot(_db);
+        await SaveOrRestoreAsync(undo, async () =>
+        {
+            await descriptor.RemoveLinksAsync(_db, entity, toRemove, undo, ct).ConfigureAwait(false);
+            await descriptor.EnsureLinksAsync(_db, entity, toAdd, undo, ct).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
     }
 
     public Task<IReadOnlyList<Label>> GetLabelsOfAsync<T>(T entity, CancellationToken ct = default)

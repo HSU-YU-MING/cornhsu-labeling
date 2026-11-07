@@ -179,6 +179,7 @@ var onlyWork  = await store.FindByLabelAsync("工作", includeDescendants: false
 
 await store.DetachAsync(note, "急件");                      // 沒貼著的名稱會被忽略
 var noteLabels = await store.GetLabelsOfAsync(note);
+await store.ReplaceLabelsAsync(note, new[] { "論文", "同儕審稿" });   // 標籤變成剛好這幾個,一次存檔
 
 // 標籤雲:標籤 Id → 跨所有型別的連結數。完全沒被用到的標籤不會出現在字典裡。
 var counts = await store.GetUsageCountsAsync();
@@ -187,6 +188,11 @@ var uses   = counts.GetValueOrDefault(work.Id);
 await store.DeleteAsync(review.Id);    // 各型別的連結由 cascade delete 清除;
                                        // 還有子標籤時會拋例外
 ```
+
+`ReplaceLabelsAsync` 是標籤編輯器「儲存」鈕需要的動作。呼叫之後,實體會剛好貼著你列出的標籤:沒列到的撕掉,
+缺的補上,留下來的連結保留原本的 `AttachedAt`。連結的增減在同一次 `SaveChanges` 裡,要嘛全部生效,要嘛全部不生效。
+要自動建立的標籤跟 `AttachAsync` 一樣會先存檔,所以連結存檔失敗時它們仍會留著。空清單會撕掉全部,
+也因此刻意沒有 `params` 多載:忘了填名稱不該把標籤清光。實體已經剛好貼著這些標籤時,不會存檔。
 
 `UpdateAsync` 只改你傳入的那個標籤。lambda 裡可以經 `Parent` 或 `Children` 搬移別的標籤;
 改別的標籤的欄位、帶進新標籤、刪掉或移出任何標籤(包括正在更新的這一個)、改別的標籤的追蹤狀態、新增或刪掉連結,

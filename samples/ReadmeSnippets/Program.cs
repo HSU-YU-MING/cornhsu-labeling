@@ -123,6 +123,8 @@ await store.ReplaceLabelsAsync(note, new[] { "paper", "peer review" });   // exa
 var replaced = (await store.GetLabelsOfAsync(note)).Select(l => l.Name).ToList();
 var linkAfterReplace = await db.Set<LabelLink<Note, Guid>>().AsNoTracking()
     .SingleAsync(l => l.EntityId == note.Id && l.Label.Name == "peer review");
+var suggestions = await store.SuggestLabelsAsync("pa");     // autocomplete: labels starting with "pa", 10 at most
+var withoutPaper = await store.QueryWithoutLabelsAsync<Note>(new[] { "paper" });   // carrying none of these; keep composing
 
 // Tag cloud: label Id → number of links across every type. Labels used nowhere have no entry.
 var counts = await store.GetUsageCountsAsync();
@@ -146,6 +148,10 @@ Check(noteLabels.All(l => l.Name != "urgent"), "DetachAsync 撕得掉");
 Check(replaced.Count == 2 && replaced.Contains("paper") && replaced.Contains("peer review"),
       "ReplaceLabelsAsync:呼叫之後剛好貼著指定的標籤");
 Check(linkAfterReplace.AttachedAt == linkBeforeReplace.AttachedAt, "ReplaceLabelsAsync:留下的連結保留 AttachedAt");
+Check(suggestions.Any(l => l.Name == "paper"), "SuggestLabelsAsync:找得到開頭相符的標籤");
+Check(!await withoutPaper.AnyAsync(n => n.Id == note.Id), "QueryWithoutLabelsAsync:貼了的被排除,結果可以繼續組合");
+var folding = new LabelRegistry { NameNormalizer = n => n.ToLowerInvariant() };   // README 用行內寫法提到的設定
+Check(folding.NameNormalizer!("Paper") == "paper", "NameNormalizer 設得上去");
 Check(!counts.ContainsKey(work.Id) && uses == 0, "GetUsageCountsAsync:沒被用到的標籤不在字典裡");
 Check(deleteParentThrew, "DeleteAsync:還有子標籤時拋例外");
 Check(await store.FindAsync("peer review") is null

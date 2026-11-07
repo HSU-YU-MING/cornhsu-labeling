@@ -7,7 +7,8 @@ namespace Cornhsu.Labeling.EntityFrameworkCore;
 /// <see cref="ServiceCollectionExtensions.AddLabeling{TContext}"/> and <see cref="LabelStoreFactory.Create{TContext}"/>
 /// seal it. From then on everything that goes into the EF model is fixed: registering a type, or changing
 /// <see cref="LabelTableName"/> or <see cref="LinkTablePrefix"/> to a different value, throws
-/// <see cref="InvalidOperationException"/>. <see cref="AutoCreateLabels"/> can still be changed at any time.
+/// <see cref="InvalidOperationException"/>. <see cref="NameNormalizer"/> is locked the same way, because changing the
+/// rule while the app runs would stop names from finding their labels. <see cref="AutoCreateLabels"/> can still be changed at any time.
 /// </summary>
 public sealed class LabelRegistry
 {
@@ -16,6 +17,7 @@ public sealed class LabelRegistry
     private volatile bool _autoCreateLabels = true;   // 封存後仍可隨時改,由共用 registry 的每個 store 讀:可見性跟 _sealed 一樣處理
     private string _labelTableName = "Label";
     private string _linkTablePrefix = "LabelLink_";
+    private Func<string, string>? _nameNormalizer;
 
     /// <summary>Descriptors of every registered type (only the descriptive information is public).</summary>
     public IReadOnlyList<ILabelableDescriptor> Descriptors => _descriptors;
@@ -56,6 +58,25 @@ public sealed class LabelRegistry
     {
         get => _autoCreateLabels;
         set => _autoCreateLabels = value;
+    }
+
+    /// <summary>
+    /// Optional rule applied to every label name after surrounding whitespace is trimmed, by every operation that takes a name:
+    /// for example <c>r.NameNormalizer = n =&gt; n.ToLowerInvariant();</c> makes "Paper" and "paper" the same label on any database.
+    /// Null, the default, leaves names as they are and lets the database collation decide. The rule should be deterministic and
+    /// idempotent; a result that is blank is treated as a blank name, and an exception it throws reaches the caller.
+    /// Existing labels are not rewritten: rename them first, or names that no longer normalize to their stored form will not find them.
+    /// Once the registry is sealed it cannot be changed (assigning the value it already has is allowed and does nothing).
+    /// </summary>
+    public Func<string, string>? NameNormalizer
+    {
+        get => _nameNormalizer;
+        set
+        {
+            if (_sealed && !Equals(_nameNormalizer, value))
+                throw new InvalidOperationException($"LabelRegistry is sealed; {nameof(NameNormalizer)} can no longer be changed.");
+            _nameNormalizer = value;
+        }
     }
 
     /// <summary>

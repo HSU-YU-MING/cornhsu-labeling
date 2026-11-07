@@ -5,7 +5,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Cornhsu.Labeling.EntityFrameworkCore;
 
-internal sealed class EfLabelStore<TContext> : ILabelStore, ILabelSetReplacer where TContext : DbContext
+internal sealed class EfLabelStore<TContext> : ILabelStore, ILabelSetReplacer, ILabelSuggester, ILabelExclusionQuery
+    where TContext : DbContext
 {
     private readonly TContext _db;
     private readonly LabelRegistry _registry;
@@ -60,6 +61,21 @@ internal sealed class EfLabelStore<TContext> : ILabelStore, ILabelSetReplacer wh
         => await _db.Set<Label>()
             .OrderBy(l => l.SortOrder).ThenBy(l => l.Name)
             .ToListAsync(ct).ConfigureAwait(false);
+
+    public async Task<IReadOnlyList<Label>> SuggestLabelsAsync(string prefix, int limit = 10, CancellationToken ct = default)
+    {
+        if (limit < 1) throw new ArgumentOutOfRangeException(nameof(limit), limit, "limit must be at least 1.");
+
+        var normalized = Normalize(prefix);
+        if (normalized is null) return Array.Empty<Label>();
+
+        // 前綴一樣交給資料庫比對;LIKE 的大小寫語意依 provider 與 collation
+        return await _db.Set<Label>()
+            .Where(l => l.Name.StartsWith(normalized))
+            .OrderBy(l => l.SortOrder).ThenBy(l => l.Name)
+            .Take(limit)
+            .ToListAsync(ct).ConfigureAwait(false);
+    }
 
     public async Task RenameAsync(Guid labelId, string newName, CancellationToken ct = default)
     {
@@ -392,6 +408,20 @@ internal sealed class EfLabelStore<TContext> : ILabelStore, ILabelSetReplacer wh
         return (IQueryable<T>)await descriptor.CreateQueryByLabelsAsync(_db, groups, match, ct).ConfigureAwait(false);
     }
 
+    public async Task<IQueryable<T>> QueryWithoutLabelsAsync<T>(
+        IEnumerable<string> labelNames, bool includeDescendants = true, CancellationToken ct = default)
+        where T : class, ILabelable
+    {
+        if (labelNames is null) throw new ArgumentNullException(nameof(labelNames));
+
+        var descriptor = _registry.Require<T>();
+
+        var groups = await ResolveLabelIdGroupsAsync(labelNames, includeDescendants, LabelMatch.Any, ct).ConfigureAwait(false);
+        if (groups is null) return _db.Set<T>();   // 沒有有效名稱或名稱都不存在:沒有東西要排除
+
+        return (IQueryable<T>)descriptor.CreateQueryWithoutLabels(_db, groups);
+    }
+
     public async Task<IReadOnlyDictionary<Guid, int>> GetUsageCountsAsync(CancellationToken ct = default)
     {
         var totals = new Dictionary<Guid, int>();
@@ -407,13 +437,22 @@ internal sealed class EfLabelStore<TContext> : ILabelStore, ILabelSetReplacer wh
     // ---- 內部 ----
 
     /// <summary>
-    /// 名稱正規化:去前後空白;空白字串視為無效(null)。大小寫不動:
-    /// 每個 API 都拿正規化後的名稱到資料庫比對,大小寫語意依 collation。
+    /// 名稱正規化:去前後空白,再套用 <see cref="LabelRegistry.NameNormalizer"/>(有設定時);空白字串視為無效(null)。
+    /// 沒設定時大小寫不動:每個 API 都拿正規化後的名稱到資料庫比對,大小寫語意依 collation。
     /// </summary>
-    private static string? Normalize(string? name)
-        => string.IsNullOrWhiteSpace(name) ? null : name!.Trim();
+    private string? Normalize(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
 
-    private static List<string> NormalizeMany(IEnumerable<string> names)
+        var trimmed = name!.Trim();
+        var normalizer = _registry.NameNormalizer;
+        if (normalizer is null) return trimmed;
+
+        var normalized = normalizer(trimmed);
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized.Trim();
+    }
+
+    private List<string> NormalizeMany(IEnumerable<string> names)
         => names.Select(Normalize).Where(n => n is not null).Distinct().Select(n => n!).ToList();
 
     /// <summary>

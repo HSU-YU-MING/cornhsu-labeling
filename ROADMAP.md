@@ -41,5 +41,5 @@
 
 ## 維護原則
 
-公開 API 自 1.0 起凍結（2.0 是行為的 major，型別與成員都沒變）。新增寫入能力時**不要加進 `ILabelStore`**：抽象層要支援 netstandard2.0，不能用介面預設實作，加成員會弄壞其他實作；照 `ILabelSetReplacer` 的形狀走選用介面加擴充方法，留到下一個 major 再考慮併入。相依樓地板（EF Core 8、Roslyn 4.8）也是對外承諾的一部分，
+公開 API 自 1.0 起凍結（2.0 是行為的 major，型別與成員都沒變）。新增寫入能力時**不要加進 `ILabelStore`**：抽象層要支援 netstandard2.0，不能用介面預設實作，加成員會弄壞其他實作；照 `ILabelSetReplacer`、`ILabelSuggester`、`ILabelExclusionQuery` 的形狀走選用介面加擴充方法，留到下一個 major 再考慮併入。相依樓地板（EF Core 8、Roslyn 4.8）也是對外承諾的一部分，
 抬高它等同破壞性變更 —— 見 [RELEASING.md](RELEASING.md)。

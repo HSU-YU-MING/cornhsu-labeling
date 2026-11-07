@@ -219,6 +219,25 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match, CancellationToken ct)
         => await BuildEntityQueryAsync(db, labelIdGroups, match, ct).ConfigureAwait(false);
 
+    public IQueryable CreateQueryWithoutLabels(DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups)
+    {
+        var ids = labelIdGroups.SelectMany(g => g).Distinct().ToList();
+        // 主鍵取自 model,不用 ILabelable.Id:實體的主鍵可以叫別的名字,理由見 EntityKeyIn
+        var keyName = db.Model.FindEntityType(typeof(LabelLink<TEntity, TKey>))!
+            .FindNavigation(nameof(LabelLink<TEntity, TKey>.Entity))!
+            .ForeignKey.PrincipalKey.Properties.Single().Name;
+
+        return WithLargeListsAsOneParameter(db,
+            EfParameterLookup.ForGuidList is not null && ids.Count > MaxIdsPerQuery,
+            asOneParameter =>
+            {
+                var linked = db.Set<LabelLink<TEntity, TKey>>()
+                    .Where(LabelIdIn(ids, asOneParameter))
+                    .Select(l => l.EntityId);
+                return db.Set<TEntity>().Where(e => !linked.Contains(EF.Property<TKey>(e, keyName)));
+            });
+    }
+
     /// <summary>
     /// All 模式的群組(名稱)超過這個數目時,不在 SQL 裡為每個群組串一個 IN 子查詢:SQL Server 在二十個左右就拋 8623
     /// (查詢處理器資源不足,1.1.0 也一樣),內嵌常數也只撐到幾十個。改成一次撈出聯集標籤的 (實體, 標籤) 配對,

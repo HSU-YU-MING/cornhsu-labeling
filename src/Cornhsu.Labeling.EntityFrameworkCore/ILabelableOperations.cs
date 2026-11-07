@@ -40,6 +40,12 @@ internal interface ILabelableOperations : ILabelableDescriptor
     /// </summary>
     Task<HashSet<Guid>> GetEffectiveLinkLabelIdsAsync(DbContext db, ILabelable entity, CancellationToken ct);
 
+    /// <summary>
+    /// 建立「沒貼這些標籤」的實體查詢。沒有任何連結的實體也算。
+    /// 實際回傳 <c>IQueryable&lt;TEntity&gt;</c>。只組查詢、不查資料庫。
+    /// </summary>
+    IQueryable CreateQueryWithoutLabels(DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups);
+
     /// <summary>取得實體目前貼著的所有標籤。</summary>
     Task<IReadOnlyList<Label>> GetLabelsAsync(DbContext db, ILabelable entity, CancellationToken ct);
 

@@ -320,7 +320,7 @@ internal sealed class EfLabelStore<TContext> : ILabelStore, ILabelSetReplacer wh
         await SaveOrRestoreAsync(undo, async () =>
         {
             await descriptor.RemoveLinksAsync(_db, entity, toRemove, undo, ct).ConfigureAwait(false);
-            await descriptor.EnsureLinksAsync(_db, entity, toAdd, undo, ct).ConfigureAwait(false);
+            await descriptor.AddMissingLinksAsync(_db, entity, toAdd, undo, ct).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
     }
 

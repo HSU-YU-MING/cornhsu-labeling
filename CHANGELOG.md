@@ -14,6 +14,13 @@
 - 公開型別新增 `ILabelSetReplacer` 與 `LabelStoreExtensions`。**`ILabelStore` 沒有變**,其他實作不必改;
   沒實作 `ILabelSetReplacer` 的 store 呼叫這個方法時拋 `NotSupportedException`。
 
+### 修正
+
+- **`AttachAsync`、`AttachManyAsync` 碰到還沒存的刪除時,標籤會默默沒貼上。** 如果同一條連結已經從 context 移除、還沒存檔,
+  再貼一次不會報錯,存檔後標籤卻不見。現在會取消刪除,連結與原本的 `AttachedAt` 都留著;存檔失敗時還原成等著刪除的狀態。
+- **`AttachManyAsync` 碰到還沒存的新連結時拋 `InvalidOperationException`。** 它只查資料庫,沒看追蹤器,所以會再加一筆相同主鍵的連結。
+  現在視為已經貼好。
+
 ## [2.0.0] — 2026-10-23
 
 **行為的 major,不是 API 的 major。** 公開型別與成員、資料庫 schema、相依樓地板(EF Core 8.0.11、

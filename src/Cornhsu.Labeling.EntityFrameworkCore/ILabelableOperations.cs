@@ -22,14 +22,29 @@ internal interface ILabelableOperations : ILabelableDescriptor
     /// <summary>統計這個型別對每個標籤的使用次數。</summary>
     Task<IReadOnlyDictionary<Guid, int>> CountUsageAsync(DbContext db, CancellationToken ct);
 
-    /// <summary>為實體補上尚未存在的連結(冪等;不呼叫 SaveChanges)。新加的連結記進 <paramref name="undo"/>。</summary>
+    /// <summary>
+    /// 讓實體與這些標籤之間都有生效的連結(冪等;不呼叫 SaveChanges):沒有的補上,追蹤器裡正等著刪除的取消刪除。
+    /// 動過的項目記進 <paramref name="undo"/>。
+    /// </summary>
     Task AddMissingLinksAsync(DbContext db, ILabelable entity, IReadOnlyList<Label> labels, TrackerSnapshot undo, CancellationToken ct);
 
-    /// <summary>批次版:為多個實體補上尚未存在的連結,既有連結一次查詢(冪等;不呼叫 SaveChanges)。新加的連結記進 <paramref name="undo"/>。</summary>
+    /// <summary>批次版:語意同 <see cref="AddMissingLinksAsync"/>,既有連結一次查詢,追蹤器裡還沒存的也算在內。動過的項目記進 <paramref name="undo"/>。</summary>
     Task AddMissingLinksManyAsync(DbContext db, IReadOnlyList<ILabelable> entities, IReadOnlyList<Label> labels, TrackerSnapshot undo, CancellationToken ct);
 
     /// <summary>移除實體與指定標籤之間的連結(不呼叫 SaveChanges)。移除前的狀態記進 <paramref name="undo"/>。</summary>
     Task RemoveLinksAsync(DbContext db, ILabelable entity, IReadOnlyCollection<Guid> labelIds, TrackerSnapshot undo, CancellationToken ct);
+
+    /// <summary>
+    /// 實體目前實際生效的連結指向哪些標籤:資料庫裡的,加上追蹤器裡還沒存的新增,扣掉還沒存的刪除。
+    /// 只讀不改追蹤器。
+    /// </summary>
+    Task<HashSet<Guid>> GetEffectiveLinkLabelIdsAsync(DbContext db, ILabelable entity, CancellationToken ct);
+
+    /// <summary>
+    /// 建立「沒貼這些標籤」的實體查詢。沒有任何連結的實體也算。
+    /// 實際回傳 <c>IQueryable&lt;TEntity&gt;</c>。只組查詢、不查資料庫。
+    /// </summary>
+    IQueryable CreateQueryWithoutLabels(DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups);
 
     /// <summary>取得實體目前貼著的所有標籤。</summary>
     Task<IReadOnlyList<Label>> GetLabelsAsync(DbContext db, ILabelable entity, CancellationToken ct);

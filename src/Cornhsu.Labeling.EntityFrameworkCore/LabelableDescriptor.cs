@@ -71,7 +71,11 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
         {
             // 複合主鍵直接 Find:同時看得到資料庫與尚未存檔的追蹤項目 → 冪等
             var existing = await links.FindAsync(new object[] { label.Id, id }, ct).ConfigureAwait(false);
-            if (existing is not null) continue;
+            if (existing is not null)
+            {
+                KeepIfPendingDelete(db.Entry(existing), undo);
+                continue;
+            }
 
             var link = new LabelLink<TEntity, TKey>
             {
@@ -102,6 +106,16 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
                 .ToListAsync(ct).ConfigureAwait(false);
             foreach (var x in existing)
                 have.Add((x.LabelId, x.EntityId));
+        }
+
+        // 上面只查了資料庫,追蹤器裡還沒存的也要算:新增的不能再加一次(EF 會拋主鍵重複),等著刪除的要取消刪除
+        var entitySet = entityIds.ToHashSet();
+        var labelSet = labelIds.ToHashSet();
+        foreach (var entry in db.ChangeTracker.Entries<LabelLink<TEntity, TKey>>().ToList())
+        {
+            if (!labelSet.Contains(entry.Entity.LabelId) || !entitySet.Contains(entry.Entity.EntityId)) continue;
+            if (entry.State == EntityState.Added) have.Add((entry.Entity.LabelId, entry.Entity.EntityId));
+            else KeepIfPendingDelete(entry, undo);
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -135,6 +149,35 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
             undo.Capture(db.Entry(link), withValues: false);
             links.Remove(link);
         }
+    }
+
+    public async Task<HashSet<Guid>> GetEffectiveLinkLabelIdsAsync(DbContext db, ILabelable entity, CancellationToken ct)
+    {
+        var id = ((TEntity)entity).Id;
+        var stored = await db.Set<LabelLink<TEntity, TKey>>().AsNoTracking()
+            .Where(EntityIdEquals(id))
+            .Select(l => l.LabelId)
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        var effective = new HashSet<Guid>(stored);
+        foreach (var entry in db.ChangeTracker.Entries<LabelLink<TEntity, TKey>>())
+        {
+            if (!EqualityComparer<TKey>.Default.Equals(entry.Entity.EntityId, id)) continue;
+            if (entry.State == EntityState.Added) effective.Add(entry.Entity.LabelId);
+            else if (entry.State == EntityState.Deleted) effective.Remove(entry.Entity.LabelId);
+        }
+        return effective;
+    }
+
+    /// <summary>
+    /// 消費端已經標記刪除、還沒存的連結:這次呼叫要它留著,就取消刪除。
+    /// 不處理的話查得到連結、以為已經貼好,存檔後反而不見,而且沒有任何錯誤訊息。
+    /// </summary>
+    private static void KeepIfPendingDelete(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry entry, TrackerSnapshot undo)
+    {
+        if (entry.State != EntityState.Deleted) return;
+        undo.Capture(entry, withValues: false);
+        entry.State = EntityState.Unchanged;
     }
 
     public async Task<IReadOnlyList<Label>> GetLabelsAsync(DbContext db, ILabelable entity, CancellationToken ct)
@@ -175,6 +218,25 @@ internal sealed class LabelableDescriptor<TEntity, TKey> : ILabelableOperations
     public async Task<IQueryable> CreateQueryByLabelsAsync(
         DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups, LabelMatch match, CancellationToken ct)
         => await BuildEntityQueryAsync(db, labelIdGroups, match, ct).ConfigureAwait(false);
+
+    public IQueryable CreateQueryWithoutLabels(DbContext db, IReadOnlyList<IReadOnlyCollection<Guid>> labelIdGroups)
+    {
+        var ids = labelIdGroups.SelectMany(g => g).Distinct().ToList();
+        // 主鍵取自 model,不用 ILabelable.Id:實體的主鍵可以叫別的名字,理由見 EntityKeyIn
+        var keyName = db.Model.FindEntityType(typeof(LabelLink<TEntity, TKey>))!
+            .FindNavigation(nameof(LabelLink<TEntity, TKey>.Entity))!
+            .ForeignKey.PrincipalKey.Properties.Single().Name;
+
+        return WithLargeListsAsOneParameter(db,
+            EfParameterLookup.ForGuidList is not null && ids.Count > MaxIdsPerQuery,
+            asOneParameter =>
+            {
+                var linked = db.Set<LabelLink<TEntity, TKey>>()
+                    .Where(LabelIdIn(ids, asOneParameter))
+                    .Select(l => l.EntityId);
+                return db.Set<TEntity>().Where(e => !linked.Contains(EF.Property<TKey>(e, keyName)));
+            });
+    }
 
     /// <summary>
     /// All 模式的群組(名稱)超過這個數目時,不在 SQL 裡為每個群組串一個 IN 子查詢:SQL Server 在二十個左右就拋 8623

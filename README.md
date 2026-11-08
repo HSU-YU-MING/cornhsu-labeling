@@ -8,8 +8,10 @@
 
 **[Project write-up](https://cornhsu.com/cornhsu-labeling) · [NuGet](https://www.nuget.org/packages/Cornhsu.Labeling.EntityFrameworkCore) · [繁體中文](README.zh-Hant.md) · MIT**
 
-Polymorphic labeling for EF Core. **One label, attachable to any type** — with a real foreign
-key behind every single link.
+Polymorphic labeling (tagging) for EF Core. **One label, attachable to any type** — with a real foreign
+key behind every single link. If you came here looking for polymorphic tagging, a polymorphic association,
+or what `acts_as_taggable` gives you in Rails, this is that for EF Core. It has nothing to do with EF Core's
+`TagWith()`, which only adds comments to the generated SQL.
 
 Tested on SQLite / SQL Server / PostgreSQL with EF Core 8 and on SQLite with EF Core 9 / 10, and
 validated on the production data of a real product ([QuillNest](https://cornhsu.com/quillnest)).
@@ -188,6 +190,9 @@ var onlyWork  = await store.FindByLabelAsync("work", includeDescendants: false);
 
 await store.DetachAsync(note, "urgent");                    // names that are not attached are ignored
 var noteLabels = await store.GetLabelsOfAsync(note);
+await store.ReplaceLabelsAsync(note, new[] { "paper", "peer review" });   // exactly these labels, in one save
+var suggestions = await store.SuggestLabelsAsync("pa");     // autocomplete: labels starting with "pa", 10 at most
+var withoutPaper = await store.QueryWithoutLabelsAsync<Note>(new[] { "paper" });   // carrying none of these; keep composing
 
 // Tag cloud: label Id → number of links across every type. Labels used nowhere have no entry.
 var counts = await store.GetUsageCountsAsync();
@@ -196,6 +201,21 @@ var uses   = counts.GetValueOrDefault(work.Id);
 await store.DeleteAsync(review.Id);    // links on every type are removed by cascade;
                                        // throws while the label still has children
 ```
+
+`ReplaceLabelsAsync` is what a tag editor's Save button needs. Afterwards the entity carries exactly the
+labels you listed: the others are detached, missing ones are attached, and links that stay keep their
+`AttachedAt`. All link changes go in one `SaveChanges`, so they apply together or not at all. Labels that
+have to be auto-created are saved first, as with `AttachAsync`, so they remain if saving the links fails.
+An empty list detaches everything, which is why there is no `params` overload: leaving out the names must
+not clear the labels. If the entity already carries exactly these labels, nothing is saved.
+
+`SuggestLabelsAsync` matches in the database, so whether it ignores case depends on the provider and collation.
+`QueryWithoutLabelsAsync` returns an `IQueryable` you can keep composing, includes entities with no labels at
+all, and by default also excludes entities carrying a descendant of a listed label.
+
+To make every operation that takes a name follow one rule on any database, set `NameNormalizer` inside
+`AddLabeling`, for example `r.NameNormalizer = n => n.ToLowerInvariant();`. Existing labels are not rewritten,
+so rename them first if they do not already follow the rule. It cannot be changed after the registry is sealed.
 
 `UpdateAsync` changes only the label you pass it. Inside the lambda you may also move other labels
 (through `Parent` or `Children`); changing another label's fields, adding a label, deleting or

@@ -22,7 +22,7 @@ D:\擴充功能\nuget\Labeling\cornhsu-labeling\   ← 真正的 git repo 在這
 ## 指令
 
 - 建置：`dotnet build Cornhsu.Labeling.slnx`
-- 測試：`dotnet test`——344 條（主測試 324 + analyzer 20）。動了 `src/` 的任何東西**必跑**。
+- 測試：`dotnet test`——413 條（主測試 393 + analyzer 20）。動了 `src/` 的任何東西**必跑**。
   預設走 **SQLite in-memory**，秒級。
 - 換 provider 跑同一套測試（環境變數，見 `tests/.../TestInfrastructure.cs`）：
 
@@ -111,12 +111,15 @@ README 的 Design trade-offs 已經完整寫了「為什麼是每型別一張連
   表名與前綴會進快取的 model，封存後再改只會默默對不上。`AutoCreateLabels` 不進 model，刻意維持隨時可改。
   測試能繞過這件事，是因為 `TestInfrastructure` 每個 `TestDb` 都加了
   `EnableServiceProviderCaching(false)` 隔離內部 provider——**正式 App 不需要也不該加那行**。
+- **新增寫入能力不要加進 `ILabelStore`。** 抽象層要支援 netstandard2.0，不能用介面預設實作，加成員會弄壞其他實作。
+  照 `ILabelSetReplacer` 這類選用介面加 `LabelStoreExtensions`（擴充方法）的形狀走，呼叫端的寫法跟一般方法一樣。
 - **`Label` 保持最小**，只留視覺識別欄位（Name / Color / Icon / 階層 / 排序）。
   業務語意欄位（標籤型別、模組或租戶隔離、權限）刻意不收，因為套件無法理解也無法替人把關。
   要擴充走 1:1 伴生表。**「讓 Label 支援泛型 / 讓使用者繼承 Label」這條路已經評估過並否決**，
   理由是它會把泛型汙染整個套件、把侵入性帶回來（README「Extending Label」有寫）。
 - **標籤名稱全域唯一（含跨階層）。** 整個 API 以名稱定址，允許同名會讓每一個名稱呼叫變歧義。
   要改成「每父層唯一」必然伴隨路徑定址 API——那是之後某個 major 的事，見 ROADMAP「未來 major 的範疇」。
+- **`NameNormalizer` 封存後不能換。** 它不進 EF model，但執行途中換規則，同一個名稱就對不到原本的標籤。
 - **名稱一律交給資料庫比對**（2.0，決策 H3）。每個吃名稱的 API（含 `FindByLabel(s)Async`／`QueryByLabel(s)Async`）
   都把正規化後的名稱交給資料庫，大小寫語意跟 collation 走。**不要在記憶體用 `StringComparer` 對名稱**——
   記憶體不知道資料庫的 collation；1.x 的四支名稱查詢就是這樣，在不分大小寫的資料庫上跟其他 API 對不上。

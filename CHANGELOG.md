@@ -1,5 +1,32 @@
 # Changelog
 
+## [2.1.0] — 2026-11-08
+
+### 新增
+
+- **`ReplaceLabelsAsync`:把實體的標籤整組換成指定的這幾個**,標籤編輯器「儲存」鈕需要的動作。
+  過去只有 `AttachAsync` 與 `DetachAsync`,呼叫端要自己算差異,而且兩次存檔之間失敗會留下一半。
+  - 連結的增減在同一次 `SaveChanges` 裡;失敗時撤掉 store 放進追蹤器的變更。
+  - 留下來的連結不重建,`AttachedAt` 不變。
+  - 空清單撕掉全部,標籤本身不會被刪。刻意沒有 `params` 多載:忘了填名稱不該把標籤清光。
+  - 集合沒有變化時不存檔,不會順帶送出 context 裡其他未存的變更。
+  - 不存在的標籤跟 `AttachAsync` 一樣依 `AutoCreateLabels` 處理;要自動建立的標籤會先各自存檔,所以連結存檔失敗時它們仍會留著。
+- 公開型別新增 `ILabelSetReplacer` 與 `LabelStoreExtensions`。**`ILabelStore` 沒有變**,其他實作不必改;
+  沒實作 `ILabelSetReplacer` 的 store 呼叫這個方法時拋 `NotSupportedException`。
+- **`SuggestLabelsAsync`:以前綴找標籤**,給自動完成用,不必載入全部標籤。排序跟 `GetAllAsync` 一樣,預設最多 10 筆;
+  空白前綴回傳空清單。比對交給資料庫,所以分不分大小寫看 provider 與 collation。公開型別新增 `ILabelSuggester`。
+- **`QueryWithoutLabelsAsync<T>`:撈出沒貼這些標籤的實體**,回傳可以繼續組合的 `IQueryable<T>`。完全沒貼標籤的實體也算,
+  預設連貼了子孫標籤的也排除;名稱不存在就略過。`LabelMatch` 沒有加成員,別人的 `switch` 不受影響。公開型別新增 `ILabelExclusionQuery`。
+- **`LabelRegistry.NameNormalizer`:讓每個吃名稱的操作走同一套規則**,例如不分大小寫,不必依賴資料庫的 collation。
+  預設 null,行為不變。既有標籤不會被改寫,不符合規則的要先改名。registry 封存後不能再換。
+
+### 修正
+
+- **`AttachAsync`、`AttachManyAsync` 碰到還沒存的刪除時,標籤會默默沒貼上。** 如果同一條連結已經從 context 移除、還沒存檔,
+  再貼一次不會報錯,存檔後標籤卻不見。現在會取消刪除,連結與原本的 `AttachedAt` 都留著;存檔失敗時還原成等著刪除的狀態。
+- **`AttachManyAsync` 碰到還沒存的新連結時拋 `InvalidOperationException`。** 它只查資料庫,沒看追蹤器,所以會再加一筆相同主鍵的連結。
+  現在視為已經貼好。
+
 ## [2.0.0] — 2026-10-23
 
 **行為的 major,不是 API 的 major。** 公開型別與成員、資料庫 schema、相依樓地板(EF Core 8.0.11、

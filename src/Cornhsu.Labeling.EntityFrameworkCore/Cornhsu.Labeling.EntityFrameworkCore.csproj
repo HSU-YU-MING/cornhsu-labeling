@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <PackageId>Cornhsu.Labeling.EntityFrameworkCore</PackageId>
-    <Description>The EF Core implementation of Cornhsu.Labeling. Generates a fully foreign-keyed join table per labelable type and supports querying labels across types.</Description>
+    <Description>Polymorphic tagging for EF Core, like Rails acts_as_taggable but with real foreign keys: the EF Core implementation of Cornhsu.Labeling. Generates a fully foreign-keyed join table per labelable type and supports querying labels across types.</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -9,6 +9,8 @@
 **[作品介紹與開發故事](https://cornhsu.com/cornhsu-labeling) · [NuGet](https://www.nuget.org/packages/Cornhsu.Labeling.EntityFrameworkCore) · [English](README.md) · MIT**
 
 給 EF Core 的多型標籤系統。**同一個標籤,貼在任何型別上**——而且每條連結都有真外鍵。
+如果你在找 EF Core 的多型標籤(polymorphic tagging)、多型關聯(polymorphic association),或 Rails `acts_as_taggable` 的對應做法,就是這個。
+它跟 EF Core 的 `TagWith()` 無關,那個只是在產生的 SQL 裡加註解。
 
 測試涵蓋 SQLite / SQL Server / PostgreSQL × EF Core 8,以及 SQLite × EF Core 9 / 10;
 已在真實產品([QuillNest](https://cornhsu.com/quillnest))的正式資料上驗證。
@@ -179,6 +181,9 @@ var onlyWork  = await store.FindByLabelAsync("工作", includeDescendants: false
 
 await store.DetachAsync(note, "急件");                      // 沒貼著的名稱會被忽略
 var noteLabels = await store.GetLabelsOfAsync(note);
+await store.ReplaceLabelsAsync(note, new[] { "論文", "同儕審稿" });   // 標籤變成剛好這幾個,一次存檔
+var suggestions = await store.SuggestLabelsAsync("論");     // 自動完成:開頭相符的標籤,最多 10 筆
+var withoutPaper = await store.QueryWithoutLabelsAsync<Note>(new[] { "論文" });   // 沒貼這些標籤的;可以繼續組合
 
 // 標籤雲:標籤 Id → 跨所有型別的連結數。完全沒被用到的標籤不會出現在字典裡。
 var counts = await store.GetUsageCountsAsync();
@@ -187,6 +192,17 @@ var uses   = counts.GetValueOrDefault(work.Id);
 await store.DeleteAsync(review.Id);    // 各型別的連結由 cascade delete 清除;
                                        // 還有子標籤時會拋例外
 ```
+
+`ReplaceLabelsAsync` 是標籤編輯器「儲存」鈕需要的動作。呼叫之後,實體會剛好貼著你列出的標籤:沒列到的撕掉,
+缺的補上,留下來的連結保留原本的 `AttachedAt`。連結的增減在同一次 `SaveChanges` 裡,要嘛全部生效,要嘛全部不生效。
+要自動建立的標籤跟 `AttachAsync` 一樣會先存檔,所以連結存檔失敗時它們仍會留著。空清單會撕掉全部,
+也因此刻意沒有 `params` 多載:忘了填名稱不該把標籤清光。實體已經剛好貼著這些標籤時,不會存檔。
+
+`SuggestLabelsAsync` 在資料庫比對,所以分不分大小寫看 provider 與 collation。
+`QueryWithoutLabelsAsync` 回傳可以繼續組合的 `IQueryable`,完全沒貼標籤的實體也算在內,預設連貼了子孫標籤的也一起排除。
+
+想讓每個吃名稱的操作在任何資料庫上都走同一套規則,在 `AddLabeling` 裡設定 `NameNormalizer`,例如 `r.NameNormalizer = n => n.ToLowerInvariant();`。
+既有的標籤不會被改寫,不符合規則的要先改名。registry 封存後不能再換。
 
 `UpdateAsync` 只改你傳入的那個標籤。lambda 裡可以經 `Parent` 或 `Children` 搬移別的標籤;
 改別的標籤的欄位、帶進新標籤、刪掉或移出任何標籤(包括正在更新的這一個)、改別的標籤的追蹤狀態、新增或刪掉連結,

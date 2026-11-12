@@ -369,6 +369,7 @@ LabelLink_TodoItem(LabelId → Label.Id, EntityId → TodoItem.Id)
 | 50 筆逐筆 `GetLabelsOfAsync`(N+1 反模式) | ~5 ms |
 | `GetLabelsOfManyAsync`(50 筆一次查詢) | ~1 ms |
 | `QueryByLabelsAsync<T>`(All / Any,2 標籤) | ~2 ms |
+| `FindByLabelsAsync`(All,2 標籤、跨 5 型別) | ~28 ms |
 
 結論:跨型別查詢的「每型別一次查詢」樸素策略在此規模綽綽有餘,所以不做查詢合併優化。
 清單畫面請用 `GetLabelsOfManyAsync`,不要在迴圈裡呼叫 `GetLabelsOfAsync`

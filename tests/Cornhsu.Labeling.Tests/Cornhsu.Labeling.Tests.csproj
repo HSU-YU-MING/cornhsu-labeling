@@ -24,6 +24,13 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Cornhsu.Labeling.EntityFrameworkCore\Cornhsu.Labeling.EntityFrameworkCore.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="$(CornhsuEfVersion)" />
+    <!-- 把傳遞帶進來的原生 SQLite 抬到已修補的版本。
+         EF 8.0.11 帶 bundle_e_sqlite3 2.1.6 → lib.e_sqlite3 2.1.6,那版有 CVE-2025-6965。
+         ⚠ 不能用「升 EF」解決:上面那個 CornhsuEfVersion 必須等於 src 的相依樓地板,
+         而 Npgsql 的 EF 8 線也剛好只到 8.0.11(兩個理由都寫在上面)。所以改成直接釘這一顆。
+         2.1.14 仍在 2.1.x,EF 9/10 矩陣帶的是 2.1.13,NuGet 統一到 2.1.14,不會打架。
+         等哪天 src 樓地板抬高、EF 自己帶的版本就已經修好了,這行可以刪掉。 -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.14" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="$(CornhsuEfVersion)" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="$(CornhsuEfVersion)" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="$(CornhsuDiVersion)" />

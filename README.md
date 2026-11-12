@@ -402,6 +402,7 @@ links, medians on an ordinary desktop; the harness is in
 | 50 individual `GetLabelsOfAsync` calls (the N+1 anti-pattern) | ~5 ms |
 | `GetLabelsOfManyAsync` (50 rows in one query) | ~1 ms |
 | `QueryByLabelsAsync<T>` (All / Any, 2 labels) | ~2 ms |
+| `FindByLabelsAsync` (All, 2 labels, across 5 types) | ~28 ms |
 
 Conclusion: the naive "one query per type" strategy for cross-type queries is more than adequate
 at this scale, so the package does not merge them. For list views use `GetLabelsOfManyAsync` rather

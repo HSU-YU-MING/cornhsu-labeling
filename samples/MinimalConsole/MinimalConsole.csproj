@@ -8,6 +8,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Cornhsu.Labeling.EntityFrameworkCore\Cornhsu.Labeling.EntityFrameworkCore.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.11" />
+    <!-- 把傳遞帶進來的原生 SQLite 抬到已修補的版本(CVE-2025-6965)。
+         為什麼不是升 EF,見 tests/Cornhsu.Labeling.Tests/Cornhsu.Labeling.Tests.csproj 的註解(正本)。 -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.14" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
   </ItemGroup>
 </Project>

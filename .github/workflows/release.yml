@@ -35,7 +35,29 @@ jobs:
             echo "✗ tag 是 v$REL_VERSION,但 CHANGELOG.md 最上面那個版本是 ${top:-(沒有)}。先補上 ## $REL_VERSION 的段落再重推 tag。"
             exit 1
           fi
-          echo "✓ CHANGELOG 頂端 $top 與 tag 一致"
+          # 第 15 步要發的 Release 內容就是從這一節抽出來的。抽取放在這裡,是因為這裡還在
+          # 「推上 nuget.org 之前」——抽不到就是「標題寫了但底下沒內容」,此時刪 tag 重來還救得回來。
+          # CHANGELOG 兩種標題格式都吃:「## 0.12.0」與「## [1.1.0] — 2026-08-07」
+          notes=$(awk -v v="$REL_VERSION" '
+            /^## / {
+              if (found) exit
+              line = $0; sub(/^## +\[?/, "", line)
+              if (index(line, v) == 1) {
+                rest = substr(line, length(v) + 1)
+                if (rest !~ /^[0-9.]/) { found = 1; next }
+              }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md)
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            echo "✗ CHANGELOG.md 有 ## $REL_VERSION 的標題,但底下沒有內容。"
+            echo "  GitHub Release 的內容就是從這一節抽出來的 —— 使用者被要求 pin @v$REL_VERSION 時,"
+            echo "  Releases 頁是他們唯一看得到這版改了什麼的地方。把那一節寫完,再重推 tag。"
+            exit 1
+          fi
+          printf '%s\n' "$notes" > "$RUNNER_TEMP/release-notes.md"
+          echo "✓ CHANGELOG 頂端 $top 與 tag 一致,Release 內容已備妥($(printf '%s\n' "$notes" | wc -l) 行)"
 
       - run: dotnet restore
       - run: dotnet build -c Release --no-restore -p:Version=${{ steps.ver.outputs.version }}
@@ -66,25 +88,16 @@ jobs:
         run: |
           set -euo pipefail
           v="${{ steps.ver.outputs.version }}"
-          # CHANGELOG 兩種標題格式都吃:「## 0.12.0」與「## [1.1.0] — 2026-08-07」
-          notes=$(awk -v v="$v" '
-            /^## / {
-              if (found) exit
-              line = $0; sub(/^## +\[?/, "", line)
-              if (index(line, v) == 1) {
-                rest = substr(line, length(v) + 1)
-                if (rest !~ /^[0-9.]/) { found = 1; next }
-              }
-              next
-            }
-            found { print }
-          ' CHANGELOG.md)
-          [ -n "$notes" ] || notes="See CHANGELOG.md."
+          # 內容在「Assert CHANGELOG top entry matches the tag」那一步就抽好了,這裡只負責發。
+          # 抽取刻意不放在這裡:這一步跑到的時候套件已經推上 nuget.org,不可逆了——
+          # 那時才發現 CHANGELOG 那一節是空的,失敗也救不回任何東西,只會變成「套件出去了但沒有 Release」。
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          [ -s "$notes_file" ] || { echo "✗ 找不到前面備妥的 Release 內容:$notes_file"; exit 1; }
           # 冪等:重跑 job 時改成更新既有 Release,而不是報錯
           if gh release view "v$v" >/dev/null 2>&1; then
-            gh release edit "v$v" --notes "$notes"
+            gh release edit "v$v" --notes-file "$notes_file"
             echo "✔ 已更新既有 Release v$v"
           else
-            gh release create "v$v" --title "v$v" --notes "$notes" --verify-tag
+            gh release create "v$v" --title "v$v" --notes-file "$notes_file" --verify-tag
             echo "✔ 已建立 Release v$v"
           fi

@@ -236,11 +236,12 @@ XML 註解會被打包成 `.xml` 隨 nupkg 出貨，也就是消費端在 IDE �
 
 ## 技術債留帳
 
-### CVE-2025-6965（SQLite 記憶體毀損）：判讀 low、刻意不處理
+### ~~CVE-2025-6965（SQLite 記憶體毀損）：判讀 low、刻意不處理~~ —— 已處理（2026-11-13）
 
-`tests/` 與 `samples/` 透過 `Microsoft.EntityFrameworkCore.Sqlite 8.0.11` 傳遞帶入
+`tests/` 與 `samples/` 曾透過 `Microsoft.EntityFrameworkCore.Sqlite 8.0.11` 傳遞帶入
 `SQLitePCLRaw.lib.e_sqlite3 2.1.6`，該版含 SQLite 記憶體毀損漏洞
-（**GHSA-2m69-gcr7-jv3q**，資料庫等級 High / CVSS 7.2）。**2026-08-23 稽核判讀為 low、不處理**：
+（**GHSA-2m69-gcr7-jv3q**，資料庫等級 High / CVSS 7.2）。2026-08-23 稽核判讀為 low、不處理，
+理由是：
 
 1. **三個 src 專案全部乾淨**——`Cornhsu.Labeling.EntityFrameworkCore` 只引用
    provider-neutral 的 `Microsoft.EntityFrameworkCore.Relational`，刻意不綁 Sqlite，
@@ -248,10 +249,16 @@ XML 註解會被打包成 `.xml` 隨 nupkg 出貨，也就是消費端在 IDE �
 2. 純開發期依賴，SQL 全部由自家測試碼產生，**沒有不可信輸入**。
 3. 查證當時**上游尚無修補版**。
 
-**觸發點**：等 SQLitePCLRaw 釋出帶 SQLite 3.50.2+ 的版本，再升 tests/samples 的
-EF Core Sqlite，或加一筆直接引用蓋掉 transitive 版本。
-在那之前**不用重新緊張**——掃到這條就回來看這一段。
-（注意：升 tests 的 EF Sqlite 會撞上前面那個 8.0.11 天花板，兩件事要一起處理。）
+**觸發點（等 SQLitePCLRaw 釋出帶 SQLite 3.50.2+ 的版本）已經到了**，而且處理完了：
+`tests/` 與四個 `samples/` 都直接釘 `SQLitePCLRaw.bundle_e_sqlite3 2.1.14`，
+蓋掉 transitive 的 2.1.6。
+
+⚠ **刻意不去升 EF Core Sqlite 本身**：`CornhsuEfVersion` 必須等於 src 的相依下限，
+而 Npgsql 的 EF 8 線最高只到 8.0.11，往上就會撞 NU1603 + NU1605。所以是「直接釘
+SQLitePCLRaw」而不是「升 EF」——這兩條路只有前者走得通。
+
+> 這一條原本只有 `D:\技術債帳.md` 記了「觸發點到了」，這份 CLAUDE.md 停在舊版，
+> 是 2026-11-13 掃描抓到的四組「一份說已修、一份說還沒」之一。
 
 ### 這兩個不是機密，不要「修」
 

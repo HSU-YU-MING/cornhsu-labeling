@@ -21,6 +21,22 @@ jobs:
         id: ver
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      # CHANGELOG 是「推 tag 之前」的版本真相源(下面的 Release 說明也取自它)。
+      # 兩者不一致就別發:擋在這裡的代價是「tag 已推、但沒發出去」—— 刪 tag 重來即可;
+      # 相對地,CHANGELOG 沒寫就發到 nuget.org 是**沒有反悔機會的**。
+      # 照 XamlContrast / Parity 的同一道關,2026-11-13 補上 —— 此前這個 repo 沒有。
+      - name: Assert CHANGELOG top entry matches the tag
+        env:
+          REL_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          top=$(grep -m1 -oE '^## +\[?[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+          if [ "$top" != "$REL_VERSION" ]; then
+            echo "✗ tag 是 v$REL_VERSION,但 CHANGELOG.md 最上面那個版本是 ${top:-(沒有)}。先補上 ## $REL_VERSION 的段落再重推 tag。"
+            exit 1
+          fi
+          echo "✓ CHANGELOG 頂端 $top 與 tag 一致"
+
       - run: dotnet restore
       - run: dotnet build -c Release --no-restore -p:Version=${{ steps.ver.outputs.version }}
       - run: dotnet test -c Release --no-build

@@ -1,0 +1,18 @@
+# 檔名的數字前綴是排序用的：GitHub 照檔名字母排。新增表單時記得加前綴，否則它會排到最前面。
+# （原本只有 bug_report.yml；2026-11-14 改成 1-bug-report.yml，並加上分析器誤報的 2-analyzer.yml。）
+#
+# 空白 issue 保持開啟：表單不可能涵蓋所有情況，「沒有適合的表單」是人放棄回報最常見的理由。
+#
+# 參考 Ruff、typescript-eslint、ESLint 的表單補了：搜尋過舊 issue 的勾選；分析器表單另有
+# 「可以在自己的專案上試修正版」與 AI 協助聲明（選填）。
+blank_issues_enabled: true
+contact_links:
+  - name: Limitations — check here first
+    url: https://github.com/HSU-YU-MING/cornhsu-labeling#limitations
+    about: Some behaviour is a documented trade-off (cross-type queries, global label names, the registry lifetime).
+  - name: How to write a report that becomes a failing test
+    url: https://github.com/HSU-YU-MING/cornhsu-labeling/blob/main/CONTRIBUTING.md
+    about: The three things that make a labeling bug reproducible, and what a pull request needs.
+  - name: Security issue — report privately
+    url: https://github.com/HSU-YU-MING/cornhsu-labeling/security/advisories/new
+    about: Please don't open a public issue for a vulnerability. See SECURITY.md for what is in scope.

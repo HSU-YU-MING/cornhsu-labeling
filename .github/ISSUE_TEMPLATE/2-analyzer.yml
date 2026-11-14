@@ -1,0 +1,81 @@
+name: Analyzer — a wrong or missing CHSU001 / CHSU002
+description: The analyzer flagged a type that is registered, or stayed quiet about one that throws "type is not registered" at run time.
+labels: ["analyzer"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The analyzer exists to move a run-time "type is not registered" into a compile error. A false positive
+        trains people to disable it, so these reports are taken seriously — and they belong in the open.
+
+        One false positive is already documented: **CHSU001 fires when the registration lives in another
+        assembly or goes through a generic helper** (`r.Labelable<T>()` with `T` a type parameter). See
+        [the README](https://github.com/HSU-YU-MING/cornhsu-labeling#compile-time-safety-net-roslyn-analyzer)
+        for how to silence it. If your case is something else, please go on.
+
+        Write in English or 中文, whichever is easier.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched the [existing issues](https://github.com/HSU-YU-MING/cornhsu-labeling/issues?q=is%3Aissue) and this hasn't been reported.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: The `Cornhsu.Labeling` version you referenced (the analyzer ships inside it).
+      placeholder: "2.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong?
+      options:
+        - "CHSU001 fired, but the type is registered"
+        - "CHSU002 fired, but it shouldn't have"
+        - "No diagnostic, but registration throws at run time"
+        - "Something else"
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostic
+    attributes:
+      label: The diagnostic, exactly as reported
+      description: From the build output or the IDE's error list, with the file and line.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: code
+    attributes:
+      label: The type and its registration
+      description: >
+        The entity declaration (with its `ILabelable<TKey>`) and the `r.Labelable<…>()` call that registers it.
+        Say whether the registration is in the same project, another project, or a helper method.
+      render: csharp
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: Where you saw it
+      options: ["Visual Studio", "Rider", "VS Code (C# Dev Kit)", "dotnet build / CI", "Other"]
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: participation
+    attributes:
+      label: Optional
+      options:
+        - label: I can try a build with a fix on my project to confirm it.
+        - label: AI helped write this report, and I've checked it against what I actually ran.

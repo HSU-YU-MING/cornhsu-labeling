@@ -15,6 +15,16 @@ body:
         **Security → Report a vulnerability** rather than this form — see
         [SECURITY.md](https://github.com/HSU-YU-MING/cornhsu-labeling/blob/main/SECURITY.md).
 
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched the [existing issues](https://github.com/HSU-YU-MING/cornhsu-labeling/issues?q=is%3Aissue) and this hasn't been reported.
+          required: true
+        - label: I checked [Limitations](https://github.com/HSU-YU-MING/cornhsu-labeling#limitations) (if it's one of them, say so below — it's still useful to know it hurts).
+          required: true
+
   - type: input
     id: version
     attributes:
